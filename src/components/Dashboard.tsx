@@ -25,7 +25,9 @@ import {
   ChevronRight,
   Bell,
   Download,
-  Trash2
+  Trash2,
+  User,
+  Settings
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -61,7 +63,7 @@ import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES
 import { getAIInsights } from '../services/aiService';
 import OnboardingForm from './OnboardingForm';
 
-type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai';
+type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
@@ -500,6 +502,28 @@ export default function Dashboard() {
     }
   };
 
+  const handleUpdateSettings = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    
+    const updatedData = {
+      name: formData.get('name') as string,
+      mainService: formData.get('mainService') as string,
+      revenueGoal: Number(formData.get('revenueGoal')),
+      weddingGoalAmount: Number(formData.get('weddingGoalAmount')),
+      weddingDate: formData.get('weddingDate') as string,
+      userId: user.uid
+    };
+
+    try {
+      await setDoc(doc(db, 'onboarding', user.uid), updatedData, { merge: true });
+      alert('Configurações atualizadas com sucesso!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `onboarding/${user.uid}`);
+    }
+  };
+
   const deleteGoal = async (id: string) => {
     if (!confirm('Excluir esta meta?')) return;
     try {
@@ -821,6 +845,7 @@ export default function Dashboard() {
           <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
           <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
           <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
+          <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
         </nav>
 
         <div className="p-4 rounded-2xl bg-sublime/5 border border-sublime/10 space-y-3">
@@ -886,6 +911,7 @@ export default function Dashboard() {
                 <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
                 <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
                 <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
+                <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
               </nav>
               <button onClick={logOut} className="flex items-center gap-3 p-4 text-red-500 font-bold">
                 <LogOut size={20} />
@@ -1648,7 +1674,150 @@ export default function Dashboard() {
           </div>
         )}
 
-        {activeView !== 'dashboard' && activeView !== 'fixed_costs' && activeView !== 'mei' && activeView !== 'goals' && activeView !== 'transactions' && (
+        {activeView === 'settings' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Perfil & Ajustes</h2>
+                <p className="text-sm text-zinc-500">Personalize sua experiência no Studio Sublime.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="md:col-span-2 space-y-6">
+                <div className="glass-card p-6 space-y-6">
+                  <h3 className="font-bold flex items-center gap-2">
+                    <User size={18} className="text-sublime" />
+                    Informações do Studio
+                  </h3>
+                  
+                  <form onSubmit={handleUpdateSettings} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do Profissional</label>
+                        <input 
+                          required 
+                          name="name" 
+                          defaultValue={onboardingData?.name}
+                          className="w-full p-3 rounded-xl border border-zinc-200" 
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Serviço Principal</label>
+                        <input 
+                          required 
+                          name="mainService" 
+                          defaultValue={onboardingData?.mainService}
+                          className="w-full p-3 rounded-xl border border-zinc-200" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Meta de Faturamento Mensal (R$)</label>
+                        <input 
+                          required 
+                          name="revenueGoal" 
+                          type="number"
+                          defaultValue={onboardingData?.revenueGoal}
+                          className="w-full p-3 rounded-xl border border-zinc-200" 
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Custo do Casamento (R$)</label>
+                        <input 
+                          required 
+                          name="weddingGoalAmount" 
+                          type="number"
+                          defaultValue={onboardingData?.weddingGoalAmount}
+                          className="w-full p-3 rounded-xl border border-zinc-200" 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Data do Casamento</label>
+                      <input 
+                        required 
+                        name="weddingDate" 
+                        type="date"
+                        defaultValue={onboardingData?.weddingDate}
+                        className="w-full p-3 rounded-xl border border-zinc-200" 
+                      />
+                    </div>
+
+                    <div className="pt-4">
+                      <button 
+                        type="submit"
+                        className="w-full md:w-auto px-8 py-3 bg-sublime text-white rounded-xl font-bold shadow-lg shadow-sublime/20 hover:bg-sublime/90 transition-all"
+                      >
+                        Salvar Alterações
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="glass-card p-6 space-y-4">
+                  <h3 className="font-bold flex items-center gap-2">
+                    <Sparkles size={18} className="text-sublime" />
+                    Personalização Visual
+                  </h3>
+                  <p className="text-sm text-zinc-500">Escolha como o Studio Sublime deve se parecer para você.</p>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <button className="p-4 rounded-2xl border-2 border-sublime bg-white flex flex-col items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-sublime shadow-sm" />
+                      <span className="text-[10px] font-bold uppercase">Sublime (Padrão)</span>
+                    </button>
+                    <button className="p-4 rounded-2xl border-2 border-zinc-100 bg-white flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
+                      <div className="w-8 h-8 rounded-full bg-zinc-900 shadow-sm" />
+                      <span className="text-[10px] font-bold uppercase">Dark Mode</span>
+                    </button>
+                    <button className="p-4 rounded-2xl border-2 border-zinc-100 bg-white flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
+                      <div className="w-8 h-8 rounded-full bg-rose-400 shadow-sm" />
+                      <span className="text-[10px] font-bold uppercase">Rose Gold</span>
+                    </button>
+                    <button className="p-4 rounded-2xl border-2 border-zinc-100 bg-white flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
+                      <div className="w-8 h-8 rounded-full bg-emerald-400 shadow-sm" />
+                      <span className="text-[10px] font-bold uppercase">Emerald</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="glass-card p-6 text-center space-y-4">
+                  <div className="w-20 h-20 bg-sublime/10 rounded-full flex items-center justify-center mx-auto text-sublime">
+                    <User size={40} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">{onboardingData?.name}</h3>
+                    <p className="text-xs text-zinc-500">{user?.email}</p>
+                  </div>
+                  <div className="pt-4 border-t border-zinc-100">
+                    <p className="text-[10px] font-bold uppercase text-zinc-400 mb-2">Status da Conta</p>
+                    <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-bold uppercase">Premium</span>
+                  </div>
+                </div>
+
+                <div className="glass-card p-6 space-y-4">
+                  <h3 className="font-bold text-sm">Segurança</h3>
+                  <button className="w-full flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:bg-zinc-50 transition-all text-sm">
+                    <span>Alterar Senha</span>
+                    <ChevronRight size={16} className="text-zinc-400" />
+                  </button>
+                  <button className="w-full flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:bg-zinc-50 transition-all text-sm">
+                    <span>Autenticação 2FA</span>
+                    <span className="text-[10px] font-bold text-emerald-600 uppercase">Ativo</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView !== 'dashboard' && activeView !== 'fixed_costs' && activeView !== 'mei' && activeView !== 'goals' && activeView !== 'transactions' && activeView !== 'settings' && (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="p-6 bg-zinc-100 rounded-full text-zinc-400">
               <LayoutDashboard size={48} />
