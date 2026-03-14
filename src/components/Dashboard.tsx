@@ -10,7 +10,22 @@ import {
   Plus,
   ArrowUpRight,
   ArrowDownRight,
-  DollarSign
+  DollarSign,
+  PieChart as PieChartIcon,
+  Calculator,
+  Heart,
+  LogOut,
+  LogIn,
+  Search,
+  LayoutDashboard,
+  Repeat,
+  FileText,
+  Menu,
+  X,
+  ChevronRight,
+  Bell,
+  Download,
+  Trash2
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -20,50 +35,185 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer,
-  Cell
+  Cell,
+  PieChart,
+  Pie
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInDays, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Transaction, FinancialGoal, MEIObligation } from '../types';
-import { CATEGORIES, INITIAL_INVESTMENTS } from '../constants';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  deleteDoc,
+  setDoc,
+  getDoc
+} from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, handleFirestoreError, OperationType } from '../firebase';
+import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal } from '../types';
+import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
 import { getAIInsights } from '../services/aiService';
+import OnboardingForm from './OnboardingForm';
+
+type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai';
+type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
-  const [transactions, setTransactions] = useState<Transaction[]>([
-    { id: '1', description: 'Corte e Escova', amount: 150, type: 'income', category: 'Serviço', date: new Date().toISOString() },
-    { id: '2', description: 'Aluguel', amount: 1200, type: 'expense', category: 'Aluguel', date: new Date().toISOString() },
-    { id: '3', description: 'Produtos L\'Oréal', amount: 450, type: 'expense', category: 'Materiais', date: new Date().toISOString() },
-  ]);
+  const [user, setUser] = useState(auth.currentUser);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [pixData, setPixData] = useState<any>(null);
+  const [is2FABypassed, setIs2FABypassed] = useState(false);
 
+  const [onboardingData, setOnboardingData] = useState<OnboardingData | null>(null);
+  const [isLoadingOnboarding, setIsLoadingOnboarding] = useState(true);
+
+  const [activeView, setActiveView] = useState<View>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [serviceCosts, setServiceCosts] = useState<ServiceCost[]>([]);
+  const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
+  const [meiObligations, setMeiObligations] = useState<MeiObligation[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [weddingGoal, setWeddingGoal] = useState<WeddingGoal | null>(null);
   const [goal, setGoal] = useState<number>(8000);
+  
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
+  const [formType, setFormType] = useState<'entrada' | 'saida'>('entrada');
+  const [isAddingService, setIsAddingService] = useState(false);
+  const [isAddingFixedCost, setIsAddingFixedCost] = useState(false);
+  const [isAddingMei, setIsAddingMei] = useState(false);
+  const [isAddingGoal, setIsAddingGoal] = useState(false);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
 
-  // Derived stats
-  const currentMonthTransactions = transactions.filter(t => {
-    const date = parseISO(t.date);
-    return date >= startOfMonth(new Date()) && date <= endOfMonth(new Date());
-  });
-
-  const totalIncome = currentMonthTransactions
-    .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  const totalExpense = currentMonthTransactions
-    .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  const balance = totalIncome - totalExpense;
-  const progress = Math.min((totalIncome / goal) * 100, 100);
-
-  // MEI Alerts
-  const today = new Date();
-  const dasDueDate = new Date(today.getFullYear(), today.getMonth(), 20);
-  const daysToDAS = differenceInDays(dasDueDate, today);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterType, setFilterType] = useState('all');
 
   useEffect(() => {
+    const testConnection = async () => {
+      try {
+        const { getDocFromServer, doc } = await import('firebase/firestore');
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error: any) {
+        if (error.message?.includes('the client is offline')) {
+          console.error("Firestore connection error: client is offline. Check Firebase config.");
+          setAuthError("Erro de conexão com o banco de dados. Verifique sua internet.");
+        }
+      }
+    };
+    testConnection();
+
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (!u) {
+        setOnboardingData(null);
+        setIsLoadingOnboarding(false);
+        setTransactions([]);
+        setServiceCosts([]);
+        setFixedCosts([]);
+        setMeiObligations([]);
+        setGoals([]);
+        setWeddingGoal(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setIsLoadingOnboarding(false);
+      return;
+    }
+
+    const unsubOnboarding = onSnapshot(doc(db, 'onboarding', user.uid), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data() as OnboardingData;
+        setOnboardingData(data);
+        setGoal(data.revenueGoal);
+      }
+      setIsLoadingOnboarding(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `onboarding/${user.uid}`);
+    });
+
+    return () => unsubOnboarding();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(collection(db, 'transactions'), where('userId', '==', user.uid));
+    const unsubTrans = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+      setTransactions(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'transactions');
+    });
+
+    const qService = query(collection(db, 'serviceCosts'), where('userId', '==', user.uid));
+    const unsubService = onSnapshot(qService, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ServiceCost));
+      setServiceCosts(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'serviceCosts');
+    });
+
+    const unsubWedding = onSnapshot(doc(db, 'weddingGoals', user.uid), (doc) => {
+      if (doc.exists()) {
+        setWeddingGoal(doc.data() as WeddingGoal);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `weddingGoals/${user.uid}`);
+    });
+
+    const qFixed = query(collection(db, 'fixedCosts'), where('userId', '==', user.uid));
+    const unsubFixed = onSnapshot(qFixed, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as FixedCost));
+      setFixedCosts(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'fixedCosts');
+    });
+
+    const qMei = query(collection(db, 'meiObligations'), where('userId', '==', user.uid));
+    const unsubMei = onSnapshot(qMei, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MeiObligation));
+      setMeiObligations(data.sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime()));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'meiObligations');
+    });
+
+    const qGoals = query(collection(db, 'goals'), where('userId', '==', user.uid));
+    const unsubGoals = onSnapshot(qGoals, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Goal));
+      setGoals(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'goals');
+    });
+
+    return () => {
+      unsubTrans();
+      unsubService();
+      unsubWedding();
+      unsubFixed();
+      unsubMei();
+      unsubGoals();
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || transactions.length === 0) return;
     const fetchAI = async () => {
       setIsLoadingAI(true);
       const insights = await getAIInsights(transactions, goal, totalIncome);
@@ -71,284 +221,1688 @@ export default function Dashboard() {
       setIsLoadingAI(false);
     };
     fetchAI();
-  }, [totalIncome, goal]);
+  }, [transactions.length, goal]);
 
-  const addTransaction = (e: React.FormEvent<HTMLFormElement>) => {
+  // Stats
+  const currentMonthTransactions = transactions.filter(t => {
+    const date = parseISO(t.date);
+    return date >= startOfMonth(new Date()) && date <= endOfMonth(new Date());
+  });
+
+  const totalIncome = currentMonthTransactions
+    .filter(t => t.type === 'entrada')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const totalExpense = currentMonthTransactions
+    .filter(t => t.type === 'saida')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  const progress = Math.min((totalIncome / goal) * 100, 100);
+
+  const monthlyData = transactions.reduce((acc: any[], t) => {
+    const date = parseISO(t.date);
+    const monthYear = format(date, 'MMM/yy', { locale: ptBR });
+    const existing = acc.find(d => d.name === monthYear);
+    if (existing) {
+      if (t.type === 'entrada') existing.entrada += t.amount;
+      else existing.saida += t.amount;
+    } else {
+      acc.push({
+        name: monthYear,
+        entrada: t.type === 'entrada' ? t.amount : 0,
+        saida: t.type === 'saida' ? t.amount : 0,
+        rawDate: date
+      });
+    }
+    return acc;
+  }, []).sort((a, b) => a.rawDate.getTime() - b.rawDate.getTime()).slice(-6);
+
+  const filteredTransactions = transactions.filter(t => {
+    const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = filterCategory === 'all' || t.category === filterCategory;
+    const matchesType = filterType === 'all' || t.type === filterType;
+    return matchesSearch && matchesCategory && matchesType;
+  });
+
+  // Pie Chart Data
+  const expenseByCategory = currentMonthTransactions
+    .filter(t => t.type === 'saida')
+    .reduce((acc: any, t) => {
+      const categoryLabel = CATEGORIES.saida.find(c => c.id === t.category)?.label || t.category;
+      acc[categoryLabel] = (acc[categoryLabel] || 0) + t.amount;
+      return acc;
+    }, {});
+
+  const pieData = Object.keys(expenseByCategory).map(cat => ({
+    name: cat,
+    value: expenseByCategory[cat]
+  }));
+
+  const COLORS = ['#8b5cf6', '#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#ec4899'];
+
+  // MEI Alerts
+  const today = new Date();
+  const dasDueDate = new Date(today.getFullYear(), today.getMonth(), 20);
+  const daysToDAS = differenceInDays(dasDueDate, today);
+
+  const handleAddTransaction = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!user) return;
     const formData = new FormData(e.currentTarget);
-    const newTransaction: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      description: formData.get('description') as string,
-      amount: Number(formData.get('amount')),
-      type: formData.get('type') as any,
-      category: formData.get('category') as string,
-      date: new Date().toISOString(),
-    };
-    setTransactions([newTransaction, ...transactions]);
-    setIsAddingTransaction(false);
+    try {
+      await addDoc(collection(db, 'transactions'), {
+        description: formData.get('description'),
+        amount: Number(formData.get('amount')),
+        type: formData.get('type'),
+        category: formData.get('category'),
+        payment_method: formData.get('payment_method'),
+        notes: formData.get('notes'),
+        is_recurring: formData.get('is_recurring') === 'on',
+        date: new Date().toISOString(),
+        userId: user.uid
+      });
+      setIsAddingTransaction(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'transactions');
+    }
   };
 
-  const chartData = [
-    { name: 'Receitas', value: totalIncome, color: '#10b981' },
-    { name: 'Despesas', value: totalExpense, color: '#ef4444' },
-  ];
+  const handleAddService = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    await addDoc(collection(db, 'serviceCosts'), {
+      name: formData.get('name'),
+      materialCost: Number(formData.get('materialCost')),
+      energyCost: Number(formData.get('energyCost')),
+      timeInMinutes: Number(formData.get('timeInMinutes')),
+      hourlyRate: Number(formData.get('hourlyRate')),
+      currentPrice: Number(formData.get('currentPrice')),
+      userId: user.uid
+    });
+    setIsAddingService(false);
+  };
+
+  const handleAddFixedCost = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'fixedCosts'), {
+        name: formData.get('name'),
+        category: formData.get('category'),
+        amount: Number(formData.get('amount')),
+        due_day: Number(formData.get('due_day')),
+        is_active: true,
+        notes: formData.get('notes'),
+        userId: user.uid
+      });
+      setIsAddingFixedCost(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'fixedCosts');
+    }
+  };
+
+  const deleteFixedCost = async (id: string) => {
+    if (!confirm('Tem certeza que deseja excluir este custo fixo?')) return;
+    try {
+      await deleteDoc(doc(db, 'fixedCosts', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `fixedCosts/${id}`);
+    }
+  };
+
+  const toggleFixedCostStatus = async (id: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'fixedCosts', id), {
+        is_active: !currentStatus
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `fixedCosts/${id}`);
+    }
+  };
+
+  const handleAddMei = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'meiObligations'), {
+        name: formData.get('name'),
+        type: formData.get('type'),
+        amount: Number(formData.get('amount')),
+        due_date: formData.get('due_date'),
+        status: formData.get('status') || 'pendente',
+        reference_month: formData.get('reference_month'),
+        notes: formData.get('notes'),
+        userId: user.uid
+      });
+      setIsAddingMei(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'meiObligations');
+    }
+  };
+
+  const updateMeiStatus = async (id: string, status: 'pendente' | 'pago' | 'atrasado') => {
+    try {
+      await updateDoc(doc(db, 'meiObligations', id), { status });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `meiObligations/${id}`);
+    }
+  };
+
+  const deleteMei = async (id: string) => {
+    if (!confirm('Excluir esta obrigação?')) return;
+    try {
+      await deleteDoc(doc(db, 'meiObligations', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `meiObligations/${id}`);
+    }
+  };
+
+  const handleAddGoal = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'goals'), {
+        name: formData.get('name'),
+        target_amount: Number(formData.get('target_amount')),
+        current_amount: Number(formData.get('current_amount')) || 0,
+        target_date: formData.get('target_date'),
+        category: formData.get('category') || 'outro',
+        notes: formData.get('notes'),
+        userId: user.uid
+      });
+      setIsAddingGoal(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'goals');
+    }
+  };
+
+  const updateGoalAmount = async (id: string, amount: number) => {
+    try {
+      await updateDoc(doc(db, 'goals', id), { current_amount: amount });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `goals/${id}`);
+    }
+  };
+
+  const exportToCSV = () => {
+    const headers = ['Data', 'Descrição', 'Tipo', 'Categoria', 'Valor', 'Método', 'Notas'];
+    const rows = filteredTransactions.map(t => [
+      format(parseISO(t.date), 'dd/MM/yyyy'),
+      t.description,
+      t.type === 'entrada' ? 'Entrada' : 'Saída',
+      t.category,
+      t.amount.toString(),
+      t.payment_method || '',
+      t.notes || ''
+    ]);
+    
+    const csvContent = [headers, ...rows].map(e => e.join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `transacoes_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const sendReminders = async () => {
+    if (!user?.email) return;
+    
+    const pendingMei = meiObligations.filter(m => m.status === 'pendente');
+    const upcomingFixed = fixedCosts.filter(fc => {
+      const today = new Date().getDate();
+      return fc.is_active && fc.due_day >= today && fc.due_day <= today + 2;
+    });
+
+    if (pendingMei.length === 0 && upcomingFixed.length === 0) {
+      alert('Nenhum lembrete necessário para os próximos 2 dias.');
+      return;
+    }
+
+    setIsLoadingAI(true);
+    try {
+      const text = `Lembrete Studio Sublime:\n\n` +
+        (pendingMei.length > 0 ? `MEI Pendentes:\n${pendingMei.map(m => `- ${m.name}: R$ ${m.amount}`).join('\n')}\n\n` : '') +
+        (upcomingFixed.length > 0 ? `Custos Fixos Próximos:\n${upcomingFixed.map(fc => `- ${fc.name}: R$ ${fc.amount} (Dia ${fc.due_day})`).join('\n')}` : '');
+
+      await fetch('/api/email/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: user.email,
+          subject: 'Lembrete de Vencimentos - Studio Sublime',
+          text,
+          html: `<div style="font-family: sans-serif;">${text.replace(/\n/g, '<br>')}</div>`
+        })
+      });
+      alert('Lembretes enviados com sucesso para seu e-mail!');
+    } catch (error) {
+      console.error('Error sending reminders:', error);
+      alert('Erro ao enviar lembretes.');
+    } finally {
+      setIsLoadingAI(false);
+    }
+  };
+
+  const deleteTransaction = async (id: string) => {
+    if (!window.confirm('Excluir esta transação?')) return;
+    try {
+      await deleteDoc(doc(db, 'transactions', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `transactions/${id}`);
+    }
+  };
+
+  const deleteGoal = async (id: string) => {
+    if (!confirm('Excluir esta meta?')) return;
+    try {
+      await deleteDoc(doc(db, 'goals', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `goals/${id}`);
+    }
+  };
+
+  const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => (
+    <button 
+      onClick={() => {
+        setActiveView(view);
+        setIsMobileMenuOpen(false);
+      }}
+      className={`nav-item w-full ${activeView === view ? 'nav-item-active' : ''}`}
+    >
+      <Icon size={20} />
+      <span className="font-medium">{label}</span>
+    </button>
+  );
+
+  const handleEmailAuth = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setAuthError(null);
+    setIsLoadingAuth(true);
+    const formData = new FormData(e.currentTarget);
+    const email = formData.get('email') as string;
+    const password = formData.get('password') as string;
+    const name = formData.get('name') as string;
+
+    try {
+      if (authMode === 'register') {
+        const userCredential = await registerWithEmail(email, password);
+        await updateProfile(userCredential.user, { displayName: name });
+        setAuthMode('2fa_start');
+      } else {
+        await loginWithEmail(email, password);
+        setAuthMode('2fa_start');
+      }
+    } catch (error: any) {
+      console.error("Auth error:", error);
+      let message = 'Ocorreu um erro ao acessar. Verifique seus dados.';
+      
+      if (error.code === 'auth/email-already-in-use') {
+        message = 'Este e-mail já está em uso.';
+      } else if (error.code === 'auth/weak-password') {
+        message = 'A senha deve ter pelo menos 6 caracteres.';
+      } else if (error.code === 'auth/invalid-email') {
+        message = 'E-mail inválido.';
+      } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        message = 'E-mail ou senha incorretos.';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        message = 'O login com e-mail e senha não está ativado no Firebase.';
+      }
+      
+      setAuthError(message);
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
+  const start2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoadingAuth(true);
+    setAuthError(null);
+    try {
+      const res = await fetch('/api/auth/verify/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setAuthMode('2fa_check');
+    } catch (error: any) {
+      setAuthError('Erro ao enviar SMS. Verifique o número.');
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
+  const check2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoadingAuth(true);
+    setAuthError(null);
+    try {
+      const res = await fetch('/api/auth/verify/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber, code: verificationCode })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (data.valid) {
+        setAuthMode('login'); // Reset mode to allow dashboard to show
+      } else {
+        setAuthError('Código inválido.');
+      }
+    } catch (error: any) {
+      setAuthError('Erro na verificação.');
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
+  const generatePix = async (amount: number) => {
+    try {
+      const res = await fetch('/api/payments/pix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction_amount: amount,
+          description: "Pagamento Studio Sublime",
+          email: user?.email
+        })
+      });
+      const data = await res.json();
+      setPixData(data);
+    } catch (error) {
+      console.error("PIX error:", error);
+    }
+  };
+
+  if (isLoadingAuth || isLoadingOnboarding) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50">
+        <div className="w-12 h-12 border-4 border-sublime border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (user && onboardingData && !onboardingData.onboardingCompleted) {
+    return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} />;
+  }
+
+  if (!user || (authMode === '2fa_start' || authMode === '2fa_check') && !is2FABypassed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
+        <div className="glass-card p-8 md:p-12 text-center space-y-6 max-w-md w-full">
+          <div className="w-16 h-16 bg-sublime rounded-2xl flex items-center justify-center mx-auto shadow-xl">
+            <DollarSign className="text-white" size={32} />
+          </div>
+          
+          {(authMode === 'login' || authMode === 'register') && (
+            <>
+              <div className="space-y-2">
+                <h1 className="text-2xl font-bold font-display">Sublime Finance</h1>
+                <p className="text-zinc-500 text-sm">
+                  {authMode === 'login' ? 'Bem-vinda de volta ao seu Studio.' : 'Crie sua conta para começar a gerir.'}
+                </p>
+              </div>
+
+              <form onSubmit={handleEmailAuth} className="space-y-4 text-left">
+                {authMode === 'register' && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do Studio</label>
+                    <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder="Ex: Studio Sublime" />
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">E-mail</label>
+                  <input required name="email" type="email" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder="seu@email.com" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Senha</label>
+                  <input required name="password" type="password" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder="••••••••" />
+                </div>
+
+                {authError && (
+                  <p className="text-xs text-red-500 font-medium bg-red-50 p-2 rounded-lg text-center">{authError}</p>
+                )}
+
+                <button 
+                  type="submit"
+                  disabled={isLoadingAuth}
+                  className="w-full bg-sublime text-white px-6 py-3.5 rounded-xl font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20 disabled:opacity-50"
+                >
+                  {isLoadingAuth ? 'Processando...' : authMode === 'login' ? 'Entrar' : 'Criar Conta'}
+                </button>
+              </form>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-100"></div></div>
+                <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-zinc-400 font-bold">Ou continue com</span></div>
+              </div>
+
+              <button 
+                onClick={signInWithGoogle}
+                className="w-full flex items-center justify-center gap-3 border border-zinc-200 text-zinc-600 px-6 py-3.5 rounded-xl font-bold hover:bg-zinc-50 transition-all"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                Google
+              </button>
+
+              <p className="text-sm text-zinc-500">
+                {authMode === 'login' ? 'Não tem uma conta?' : 'Já possui uma conta?'}
+                <button 
+                  onClick={() => {
+                    setAuthMode(authMode === 'login' ? 'register' : 'login');
+                    setAuthError(null);
+                  }}
+                  className="ml-1 text-sublime font-bold hover:underline"
+                >
+                  {authMode === 'login' ? 'Cadastre-se' : 'Faça Login'}
+                </button>
+              </p>
+            </>
+          )}
+
+          {authMode === '2fa_start' && (
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold">Verificação em Duas Etapas</h2>
+                <p className="text-sm text-zinc-500">Para sua segurança, informe seu celular para receber um código via SMS.</p>
+              </div>
+              <form onSubmit={start2FA} className="space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Celular (com DDD)</label>
+                  <input 
+                    required 
+                    type="tel" 
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
+                    placeholder="+55 11 99999-9999" 
+                  />
+                </div>
+                {authError && <p className="text-xs text-red-500 text-center">{authError}</p>}
+                <button 
+                  type="submit"
+                  disabled={isLoadingAuth}
+                  className="w-full bg-sublime text-white px-6 py-3.5 rounded-xl font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20 disabled:opacity-50"
+                >
+                  {isLoadingAuth ? 'Enviando...' : 'Enviar Código'}
+                </button>
+                {authError && authError.includes('SMS') && (
+                  <button 
+                    type="button"
+                    onClick={() => setIs2FABypassed(true)}
+                    className="w-full text-xs text-sublime font-bold mt-2 hover:underline"
+                  >
+                    Pular Verificação (Apenas para Testes)
+                  </button>
+                )}
+              </form>
+            </div>
+          )}
+
+          {authMode === '2fa_check' && (
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold">Digite o Código</h2>
+                <p className="text-sm text-zinc-500">Enviamos um SMS para {phoneNumber}.</p>
+              </div>
+              <form onSubmit={check2FA} className="space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Código de 6 dígitos</label>
+                  <input 
+                    required 
+                    type="text" 
+                    maxLength={6}
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all text-center tracking-[1em] font-bold text-lg" 
+                    placeholder="000000" 
+                  />
+                </div>
+                {authError && <p className="text-xs text-red-500 text-center">{authError}</p>}
+                <button 
+                  type="submit"
+                  disabled={isLoadingAuth}
+                  className="w-full bg-sublime text-white px-6 py-3.5 rounded-xl font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20 disabled:opacity-50"
+                >
+                  {isLoadingAuth ? 'Verificando...' : 'Confirmar'}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setAuthMode('2fa_start')}
+                  className="w-full text-xs text-zinc-400 font-bold"
+                >
+                  Reenviar código
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const monthsRemaining = onboardingData ? (() => {
+    const today = new Date();
+    const target = new Date(onboardingData.weddingDate);
+    const diff = (target.getFullYear() - today.getFullYear()) * 12 + (target.getMonth() - today.getMonth());
+    return diff > 0 ? diff : 0;
+  })() : 0;
+
+  const monthlyAporte = onboardingData && monthsRemaining > 0 
+    ? onboardingData.weddingGoalAmount / monthsRemaining 
+    : 0;
 
   return (
-    <div className="min-h-screen p-4 md:p-8 space-y-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-zinc-900 font-display">Studio Sublime</h1>
-          <p className="text-zinc-500">Gestão Financeira & Fiscalização</p>
+    <div className="min-h-screen bg-zinc-50 flex flex-col md:flex-row">
+      {/* Sidebar - Desktop */}
+      <aside className="hidden md:flex flex-col w-72 bg-white border-r border-zinc-100 p-6 space-y-8 sticky top-0 h-screen overflow-y-auto">
+        <div className="flex items-center gap-3 px-2">
+          <div className="w-10 h-10 bg-sublime rounded-xl flex items-center justify-center shadow-lg shadow-sublime/20">
+            <DollarSign className="text-white" size={20} />
+          </div>
+          <h2 className="text-xl font-bold font-display text-sublime">Sublime</h2>
         </div>
+
+        <nav className="flex-1 space-y-2">
+          <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
+          <NavItem view="transactions" icon={Repeat} label="Transações" />
+          <NavItem view="fixed_costs" icon={DollarSign} label="Custos Fixos" />
+          <NavItem view="mei" icon={FileText} label="MEI" />
+          <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
+          <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
+          <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
+        </nav>
+
+        <div className="p-4 rounded-2xl bg-sublime/5 border border-sublime/10 space-y-3">
+          <div className="flex items-center gap-2 text-sublime">
+            <Sparkles size={16} />
+            <span className="text-xs font-bold uppercase tracking-wider">IA Financeira</span>
+          </div>
+          <p className="text-[10px] text-zinc-500 leading-relaxed">
+            {onboardingData 
+              ? `${onboardingData.name}, se você aumentar as vendas de '${onboardingData.mainService}' em 10%, conseguiremos antecipar a meta do casamento em 3 meses!` 
+              : 'Peça sugestões e análises inteligentes para o seu Studio.'}
+          </p>
+        </div>
+
         <button 
-          onClick={() => setIsAddingTransaction(true)}
-          className="flex items-center justify-center gap-2 bg-zinc-900 text-white px-6 py-3 rounded-xl hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+          onClick={logOut}
+          className="flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-400 hover:text-red-500 hover:bg-red-50 transition-all"
         >
-          <Plus size={20} />
-          Nova Movimentação
+          <LogOut size={20} />
+          <span className="font-medium">Sair</span>
+        </button>
+      </aside>
+
+      {/* Mobile Header */}
+      <header className="md:hidden bg-white border-b border-zinc-100 p-4 sticky top-0 z-40 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-sublime rounded-lg flex items-center justify-center">
+            <DollarSign className="text-white" size={16} />
+          </div>
+          <h2 className="font-bold font-display text-sublime">Sublime</h2>
+        </div>
+        <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-zinc-500">
+          <Menu size={24} />
         </button>
       </header>
 
-      {/* Alerts Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`p-4 rounded-2xl flex items-center gap-4 border ${
-            daysToDAS <= 5 ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'
-          }`}
-        >
-          <div className={`p-3 rounded-xl ${daysToDAS <= 5 ? 'bg-red-100' : 'bg-emerald-100'}`}>
-            <Calendar size={24} />
-          </div>
-          <div>
-            <p className="text-sm font-medium opacity-80 uppercase tracking-wider">Obrigação MEI (DAS)</p>
-            <p className="text-lg font-bold">
-              {daysToDAS < 0 ? 'Vencido!' : daysToDAS === 0 ? 'Vence Hoje!' : `Vence em ${daysToDAS} dias`}
-            </p>
-          </div>
-        </motion.div>
+      {/* Mobile Menu Overlay */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-zinc-900/60 backdrop-blur-sm md:hidden"
+          >
+            <motion.div 
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              className="absolute right-0 top-0 bottom-0 w-80 bg-white p-6 flex flex-col space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="font-bold text-xl">Menu</h2>
+                <button onClick={() => setIsMobileMenuOpen(false)} className="p-2">
+                  <X size={24} />
+                </button>
+              </div>
+              <nav className="flex-1 space-y-2">
+                <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
+                <NavItem view="transactions" icon={Repeat} label="Transações" />
+                <NavItem view="fixed_costs" icon={DollarSign} label="Custos Fixos" />
+                <NavItem view="mei" icon={FileText} label="MEI" />
+                <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
+                <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
+                <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
+              </nav>
+              <button onClick={logOut} className="flex items-center gap-3 p-4 text-red-500 font-bold">
+                <LogOut size={20} />
+                Sair
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className={`p-4 rounded-2xl flex items-center gap-4 border ${
-            totalExpense > totalIncome ? 'bg-amber-50 border-amber-100 text-amber-700' : 'bg-zinc-50 border-zinc-100 text-zinc-700'
-          }`}
-        >
-          <div className={`p-3 rounded-xl ${totalExpense > totalIncome ? 'bg-amber-100' : 'bg-zinc-100'}`}>
-            <AlertTriangle size={24} />
-          </div>
-          <div>
-            <p className="text-sm font-medium opacity-80 uppercase tracking-wider">Saúde Financeira</p>
-            <p className="text-lg font-bold">
-              {totalExpense > totalIncome ? 'Despesas acima da Receita!' : 'Fluxo de caixa saudável'}
-            </p>
-          </div>
-        </motion.div>
-      </div>
-
-      {/* Main Stats */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Goal Progress Card */}
-        <div className="lg:col-span-2 glass-card p-6 space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-zinc-900">
-              <Target className="text-zinc-400" />
-              <h3 className="font-bold text-xl">Meta de Faturamento</h3>
-            </div>
-            <div className="text-right">
-              <span className="text-sm text-zinc-500">Meta: R$ {goal.toLocaleString()}</span>
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm font-medium">
-              <span>Progresso: {progress.toFixed(1)}%</span>
-              <span>R$ {totalIncome.toLocaleString()}</span>
-            </div>
-            <div className="h-4 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200">
-              <motion.div 
-                initial={{ width: 0 }}
-                animate={{ width: `${progress}%` }}
-                className="h-full bg-zinc-900 transition-all duration-1000"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-100">
+      {/* Main Content */}
+      <main className="flex-1 p-4 md:p-8 space-y-8 overflow-y-auto max-w-5xl mx-auto w-full">
+        {/* Top Profile Bar */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src={user.photoURL || ''} className="w-10 h-10 rounded-xl border-2 border-white shadow-sm" alt="User" />
             <div>
-              <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">Total Receitas</p>
-              <p className="text-2xl font-bold text-emerald-600">R$ {totalIncome.toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">Total Despesas</p>
-              <p className="text-2xl font-bold text-red-600">R$ {totalExpense.toLocaleString()}</p>
+              <p className="text-xs text-zinc-400 font-medium">Bem-vinda de volta,</p>
+              <h1 className="text-lg font-bold text-zinc-900">{user.displayName?.split(' ')[0]}</h1>
             </div>
           </div>
+          <button 
+            onClick={() => setIsAddingTransaction(true)}
+            className="bg-sublime text-white p-2.5 rounded-xl shadow-lg shadow-sublime/20 md:px-4 md:flex md:items-center md:gap-2"
+          >
+            <Plus size={20} />
+            <span className="hidden md:inline font-bold">Novo</span>
+          </button>
         </div>
 
-        {/* AI Advisor Card */}
-        <div className="glass-card p-6 bg-zinc-900 text-white border-none shadow-xl shadow-zinc-200 overflow-hidden relative">
-          <Sparkles className="absolute -top-4 -right-4 text-white/10 w-32 h-32" />
-          <div className="relative z-10 space-y-4">
-            <div className="flex items-center gap-2">
-              <Sparkles size={20} className="text-emerald-400" />
-              <h3 className="font-bold text-xl">IA Insight</h3>
-            </div>
-            
-            <div className="space-y-3">
-              {isLoadingAI ? (
-                <div className="space-y-2 animate-pulse">
-                  <div className="h-4 bg-white/10 rounded w-full" />
-                  <div className="h-4 bg-white/10 rounded w-3/4" />
-                  <div className="h-4 bg-white/10 rounded w-5/6" />
+        {activeView === 'dashboard' && (
+          <div className="space-y-8">
+            {/* Alerts Row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`p-4 rounded-2xl flex items-center gap-4 border ${
+                  daysToDAS <= 5 ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                }`}
+              >
+                <div className={`p-3 rounded-xl ${daysToDAS <= 5 ? 'bg-red-100' : 'bg-emerald-100'}`}>
+                  <Calendar size={24} />
                 </div>
-              ) : (
-                aiInsights.map((insight, i) => (
-                  <motion.div 
-                    key={i}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.1 }}
-                    className="flex gap-3 text-sm text-zinc-300 leading-relaxed"
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-60">Obrigação MEI</p>
+                  <p className="text-lg font-bold">
+                    {daysToDAS < 0 ? 'DAS Vencido!' : daysToDAS === 0 ? 'Vence Hoje!' : `Vence em ${daysToDAS} dias`}
+                  </p>
+                </div>
+              </motion.div>
+
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="p-4 rounded-2xl flex items-center gap-4 border bg-orange-50 border-orange-100 text-orange-700"
+              >
+                <div className="p-3 rounded-xl bg-orange-100">
+                  <DollarSign size={24} />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-60">Próximos Custos</p>
+                  <p className="text-lg font-bold">
+                    {fixedCosts.filter(fc => fc.due_day >= new Date().getDate()).length} pendentes
+                  </p>
+                </div>
+              </motion.div>
+
+              {onboardingData && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="p-4 rounded-2xl flex items-center gap-4 border bg-pink-50 border-pink-100 text-pink-700"
+                >
+                  <div className="p-3 rounded-xl bg-pink-100">
+                    <Heart size={24} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider opacity-60">O Sonho: Casamento</p>
+                    <p className="text-lg font-bold">
+                      {monthsRemaining} meses • R$ {monthlyAporte.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+
+            {/* Main Stats */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 glass-card p-6 space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Target className="text-zinc-400" />
+                    <h3 className="font-bold text-lg">Meta de Faturamento</h3>
+                  </div>
+                  <span className="text-sm font-bold text-zinc-500">R$ {goal.toLocaleString()}</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-4 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progress}%` }}
+                      className="h-full bg-sublime"
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs font-bold text-zinc-400">
+                    <span>{progress.toFixed(1)}% atingido</span>
+                    <span>Faltam R$ {(goal - totalIncome).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass-card p-6 bg-sublime text-white relative overflow-hidden">
+                <Sparkles className="absolute -top-6 -right-6 text-white/5 w-32 h-32" />
+                <div className="relative z-10 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={18} className="text-white/80" />
+                    <h3 className="font-bold">IA Insight</h3>
+                  </div>
+                  <div className="space-y-2">
+                    {isLoadingAI ? (
+                      <div className="space-y-2 animate-pulse">
+                        <div className="h-3 bg-white/10 rounded w-full" />
+                        <div className="h-3 bg-white/10 rounded w-3/4" />
+                      </div>
+                    ) : (
+                      <>
+                        {onboardingData && (
+                          <p className="text-xs text-white/90 leading-relaxed">
+                            • {onboardingData.name}, aumentar as vendas de '{onboardingData.mainService}' em 10% antecipa o casamento em 3 meses!
+                          </p>
+                        )}
+                        {aiInsights.slice(0, 1).map((ins, i) => (
+                          <p key={i} className="text-xs text-white/90 leading-relaxed">• {ins}</p>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Charts Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="glass-card p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <TrendingUp size={20} className="text-zinc-400" />
+                  <h3 className="font-bold">Fluxo de Caixa (6 meses)</h3>
+                </div>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={monthlyData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                      <Tooltip 
+                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                        cursor={{ fill: '#f4f4f5' }}
+                      />
+                      <Bar dataKey="entrada" fill="#10b981" radius={[4, 4, 0, 0]} name="Entradas" />
+                      <Bar dataKey="saida" fill="#ef4444" radius={[4, 4, 0, 0]} name="Saídas" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="glass-card p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-2">
+                    <PieChartIcon size={20} className="text-zinc-400" />
+                    <h3 className="font-bold">Gastos por Categoria</h3>
+                  </div>
+                  <button 
+                    onClick={() => generatePix(100)}
+                    className="text-[10px] font-bold text-sublime bg-sublime/10 px-3 py-1.5 rounded-lg hover:bg-sublime/20 transition-all"
                   >
-                    <div className="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shrink-0" />
-                    {insight}
+                    Gerar PIX Teste (R$ 100)
+                  </button>
+                </div>
+
+                {pixData && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="mb-6 p-4 bg-zinc-900 rounded-2xl text-white space-y-3"
+                  >
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-zinc-400 uppercase">Pagamento PIX Gerado</span>
+                      <button onClick={() => setPixData(null)} className="text-zinc-500 hover:text-white"><X size={16} /></button>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl w-32 h-32 mx-auto">
+                      {/* In a real app, use the QR code from Mercado Pago */}
+                      <div className="w-full h-full bg-zinc-100 flex items-center justify-center text-zinc-400 text-[10px] text-center">
+                        QR Code<br/>Mercado Pago
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-zinc-400 text-center break-all">
+                      {pixData.point_of_interaction?.transaction_data?.qr_code || 'Código PIX indisponível'}
+                    </p>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(pixData.point_of_interaction?.transaction_data?.qr_code);
+                        alert('Código copiado!');
+                      }}
+                      className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-bold transition-all"
+                    >
+                      Copiar Código PIX
+                    </button>
                   </motion.div>
-                ))
+                )}
+
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {pieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="glass-card p-6 flex flex-col">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-2">
+                    <Calculator size={20} className="text-zinc-400" />
+                    <h3 className="font-bold">Lucratividade por Serviço</h3>
+                  </div>
+                  <button onClick={() => setIsAddingService(true)} className="p-2 bg-zinc-100 rounded-lg hover:bg-zinc-200">
+                    <Plus size={16} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-4 max-h-64">
+                  {serviceCosts.map(s => {
+                    const laborCost = (s.timeInMinutes / 60) * s.hourlyRate;
+                    const totalCost = s.materialCost + s.energyCost + laborCost;
+                    const profit = s.currentPrice - totalCost;
+                    const isProfitable = profit > 0;
+
+                    return (
+                      <div key={s.id} className="p-4 rounded-2xl bg-zinc-50 border border-zinc-100 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <h4 className="font-bold text-sm">{s.name}</h4>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isProfitable ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                            {isProfitable ? 'Lucrativo' : 'Prejuízo'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[10px] text-zinc-500">
+                          <span>Custo: R$ {totalCost.toFixed(2)}</span>
+                          <span className="font-bold text-zinc-900">Preço: R$ {s.currentPrice.toFixed(2)}</span>
+                        </div>
+                        <div className="h-1.5 bg-zinc-200 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full ${isProfitable ? 'bg-emerald-500' : 'bg-red-500'}`} 
+                            style={{ width: `${Math.min((s.currentPrice / totalCost) * 50, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Transactions List - Mobile Friendly */}
+            <div className="glass-card p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="font-bold text-lg">Últimas Transações</h3>
+                <button onClick={() => setActiveView('transactions')} className="text-sublime text-sm font-bold flex items-center gap-1">
+                  Ver tudo <ChevronRight size={16} />
+                </button>
+              </div>
+              <div className="space-y-3">
+                {transactions.slice(0, 5).map((t) => (
+                  <div key={t.id} className="flex items-center justify-between p-3 rounded-xl bg-zinc-50 border border-zinc-100">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${t.type === 'entrada' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                        {t.type === 'entrada' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                      </div>
+                      <div>
+                        <p className="font-bold text-sm text-zinc-900">{t.description}</p>
+                        <p className="text-[10px] text-zinc-500">
+                          {CATEGORIES[t.type as 'entrada' | 'saida'].find(c => c.id === t.category)?.label || t.category} • {format(parseISO(t.date), 'dd/MM')}
+                          {t.payment_method && ` • ${PAYMENT_METHODS.find(pm => pm.id === t.payment_method)?.label}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`font-bold text-sm ${t.type === 'entrada' ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {t.type === 'entrada' ? '+' : '-'} R$ {t.amount.toLocaleString()}
+                      </p>
+                      {t.is_recurring && <span className="text-[8px] font-bold uppercase text-zinc-400">Recorrente</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Other views would be implemented here */}
+        {activeView === 'fixed_costs' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Custos Fixos</h2>
+                <p className="text-sm text-zinc-500">Gerencie as despesas recorrentes do seu Studio.</p>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={sendReminders}
+                  disabled={isLoadingAI}
+                  className="bg-zinc-100 text-zinc-900 px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-200 transition-all disabled:opacity-50"
+                >
+                  <Bell size={18} />
+                  <span>Lembretes</span>
+                </button>
+                <button 
+                  onClick={() => setIsAddingFixedCost(true)}
+                  className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
+                >
+                  <Plus size={20} />
+                  <span>Adicionar</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="glass-card p-6 bg-emerald-50 border-emerald-100">
+                <p className="text-xs font-bold uppercase text-emerald-600 mb-1">Total Ativo</p>
+                <p className="text-2xl font-bold text-emerald-700">
+                  R$ {fixedCosts.filter(c => c.is_active).reduce((sum, c) => sum + c.amount, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="glass-card p-6 bg-zinc-50 border-zinc-100">
+                <p className="text-xs font-bold uppercase text-zinc-400 mb-1">Total Inativo</p>
+                <p className="text-2xl font-bold text-zinc-500">
+                  R$ {fixedCosts.filter(c => !c.is_active).reduce((sum, c) => sum + c.amount, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="glass-card p-6 bg-sublime/5 border-sublime/10">
+                <p className="text-xs font-bold uppercase text-sublime mb-1">Próximo Vencimento</p>
+                <p className="text-2xl font-bold text-sublime">
+                  {(() => {
+                    const today = new Date().getDate();
+                    const next = fixedCosts
+                      .filter(c => c.is_active)
+                      .sort((a, b) => {
+                        const da = a.due_day >= today ? a.due_day : a.due_day + 31;
+                        const db = b.due_day >= today ? b.due_day : b.due_day + 31;
+                        return da - db;
+                      })[0];
+                    return next ? `Dia ${next.due_day}` : '--';
+                  })()}
+                </p>
+              </div>
+            </div>
+
+            <div className="glass-card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-zinc-50 border-b border-zinc-100">
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Status</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Nome</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Categoria</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Vencimento</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 text-right">Valor</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {fixedCosts.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-10 text-center text-zinc-400">Nenhum custo fixo cadastrado.</td>
+                      </tr>
+                    ) : (
+                      fixedCosts.map(cost => (
+                        <tr key={cost.id} className={`hover:bg-zinc-50 transition-all ${!cost.is_active ? 'opacity-50' : ''}`}>
+                          <td className="p-4">
+                            <button 
+                              onClick={() => toggleFixedCostStatus(cost.id, cost.is_active)}
+                              className={`w-10 h-6 rounded-full relative transition-all ${cost.is_active ? 'bg-emerald-500' : 'bg-zinc-300'}`}
+                            >
+                              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${cost.is_active ? 'right-1' : 'left-1'}`} />
+                            </button>
+                          </td>
+                          <td className="p-4">
+                            <p className="font-bold text-zinc-900">{cost.name}</p>
+                            {cost.notes && <p className="text-[10px] text-zinc-400">{cost.notes}</p>}
+                          </td>
+                          <td className="p-4">
+                            <span className="text-xs font-medium px-2 py-1 rounded-lg bg-zinc-100 text-zinc-600">
+                              {FIXED_COST_CATEGORIES.find(c => c.id === cost.category)?.label || cost.category}
+                            </span>
+                          </td>
+                          <td className="p-4 text-sm font-medium text-zinc-600">Dia {cost.due_day}</td>
+                          <td className="p-4 text-sm font-bold text-zinc-900 text-right">R$ {cost.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                          <td className="p-4">
+                            <div className="flex items-center justify-center gap-2">
+                              <button 
+                                onClick={() => deleteFixedCost(cost.id)}
+                                className="p-2 text-zinc-400 hover:text-red-500 transition-all"
+                              >
+                                <X size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView === 'mei' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Obrigações MEI</h2>
+                <p className="text-sm text-zinc-500">Acompanhe seus impostos e declarações anuais.</p>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={sendReminders}
+                  disabled={isLoadingAI}
+                  className="bg-zinc-100 text-zinc-900 px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-zinc-200 transition-all disabled:opacity-50"
+                >
+                  <Bell size={18} />
+                  <span>Lembretes</span>
+                </button>
+                <button 
+                  onClick={() => setIsAddingMei(true)}
+                  className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
+                >
+                  <Plus size={20} />
+                  <span>Nova Guia</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="glass-card p-6 border-l-4 border-l-amber-500">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <h3 className="font-bold">Pendentes</h3>
+                </div>
+                <div className="space-y-3">
+                  {meiObligations.filter(m => m.status !== 'pago').map(m => (
+                    <div key={m.id} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                      <div>
+                        <p className="font-bold text-sm">{m.name}</p>
+                        <p className="text-[10px] text-zinc-400">Vence em {format(parseISO(m.due_date), 'dd/MM/yyyy')}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-bold text-sm">R$ {m.amount.toLocaleString()}</p>
+                        <button 
+                          onClick={() => updateMeiStatus(m.id, 'pago')}
+                          className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                        >
+                          <CheckCircle2 size={18} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {meiObligations.filter(m => m.status !== 'pago').length === 0 && (
+                    <p className="text-center py-4 text-zinc-400 text-sm italic">Tudo em dia! Nenhuma pendência encontrada.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="glass-card p-6 border-l-4 border-l-emerald-500">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
+                    <CheckCircle2 size={20} />
+                  </div>
+                  <h3 className="font-bold">Pagos Recentemente</h3>
+                </div>
+                <div className="space-y-3">
+                  {meiObligations.filter(m => m.status === 'pago').slice(0, 5).map(m => (
+                    <div key={m.id} className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-zinc-100 opacity-75">
+                      <div>
+                        <p className="font-bold text-sm">{m.name}</p>
+                        <p className="text-[10px] text-zinc-400">Pago em {format(parseISO(m.due_date), 'dd/MM/yyyy')}</p>
+                      </div>
+                      <p className="font-bold text-sm text-emerald-600">R$ {m.amount.toLocaleString()}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="glass-card p-6">
+              <h3 className="font-bold mb-4">Histórico Completo</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-[10px] font-bold uppercase text-zinc-400 border-b border-zinc-100">
+                      <th className="pb-4">Obrigação</th>
+                      <th className="pb-4">Vencimento</th>
+                      <th className="pb-4">Valor</th>
+                      <th className="pb-4">Status</th>
+                      <th className="pb-4 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-50">
+                    {meiObligations.map(m => (
+                      <tr key={m.id} className="hover:bg-zinc-50/50">
+                        <td className="py-4">
+                          <p className="font-bold text-sm">{m.name}</p>
+                          <p className="text-[10px] text-zinc-400">{m.type.replace('_', ' ').toUpperCase()}</p>
+                        </td>
+                        <td className="py-4 text-sm">{format(parseISO(m.due_date), 'dd/MM/yyyy')}</td>
+                        <td className="py-4 text-sm font-bold">R$ {m.amount.toLocaleString()}</td>
+                        <td className="py-4">
+                          <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+                            m.status === 'pago' ? 'bg-emerald-100 text-emerald-600' : 
+                            m.status === 'atrasado' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+                          }`}>
+                            {m.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-4 text-right">
+                          <button onClick={() => deleteMei(m.id)} className="text-zinc-300 hover:text-red-500">
+                            <X size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView === 'goals' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Metas & Sonhos</h2>
+                <p className="text-sm text-zinc-500">Planeje o futuro do seu Studio e seus sonhos pessoais.</p>
+              </div>
+              <button 
+                onClick={() => setIsAddingGoal(true)}
+                className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
+              >
+                <Plus size={20} />
+                <span>Nova Meta</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {goals.map(g => {
+                const progress = Math.min((g.current_amount / g.target_amount) * 100, 100);
+                return (
+                  <div key={g.id} className="glass-card p-6 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => deleteGoal(g.id)} className="text-zinc-300 hover:text-red-500">
+                        <X size={16} />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="p-3 bg-sublime/10 text-sublime rounded-2xl">
+                        {g.category === 'casamento' ? <Heart size={24} /> : 
+                         g.category === 'reserva_emergencia' ? <Target size={24} /> :
+                         g.category === 'equipamento' ? <Calculator size={24} /> : <Sparkles size={24} />}
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-zinc-900">{g.name}</h3>
+                        <p className="text-[10px] font-bold uppercase text-zinc-400">{g.category.replace('_', ' ')}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-end">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase text-zinc-400">Acumulado</p>
+                          <p className="text-xl font-bold text-sublime">R$ {g.current_amount.toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold uppercase text-zinc-400">Objetivo</p>
+                          <p className="font-bold text-zinc-900">R$ {g.target_amount.toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="h-3 bg-zinc-100 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${progress}%` }}
+                            className="h-full bg-sublime rounded-full"
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] font-bold text-zinc-400">
+                          <span>{progress.toFixed(1)}%</span>
+                          {g.target_date && <span>Alvo: {format(parseISO(g.target_date), 'MM/yyyy')}</span>}
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Atualizar Valor</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="number" 
+                            className="flex-1 p-2 text-xs rounded-lg border border-zinc-100 bg-zinc-50"
+                            placeholder="Novo valor..."
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                updateGoalAmount(g.id, Number((e.target as HTMLInputElement).value));
+                                (e.target as HTMLInputElement).value = '';
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {goals.length === 0 && (
+                <div className="col-span-full py-20 text-center glass-card border-dashed">
+                  <div className="mx-auto w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center text-zinc-300 mb-4">
+                    <Target size={32} />
+                  </div>
+                  <h3 className="font-bold text-zinc-900">Nenhuma meta cadastrada</h3>
+                  <p className="text-zinc-500 text-sm max-w-xs mx-auto mt-2">Comece a planejar seus sonhos! Clique no botão "Nova Meta" para começar.</p>
+                </div>
               )}
             </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* Charts & Transactions */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="glass-card p-6">
-          <h3 className="font-bold text-lg mb-6">Receitas vs Despesas</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                <YAxis axisLine={false} tickLine={false} />
-                <Tooltip 
-                  cursor={{ fill: '#f4f4f5' }}
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                />
-                <Bar dataKey="value" radius={[8, 8, 0, 0]} barSize={60}>
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="glass-card p-6 overflow-hidden flex flex-col">
-          <h3 className="font-bold text-lg mb-4">Últimas Movimentações</h3>
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-            {transactions.map((t) => (
-              <div key={t.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-zinc-50 transition-colors border border-transparent hover:border-zinc-100">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${t.type === 'income' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                    {t.type === 'income' ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-zinc-900">{t.description}</p>
-                    <p className="text-xs text-zinc-500">{t.category} • {format(parseISO(t.date), 'dd MMM', { locale: ptBR })}</p>
-                  </div>
-                </div>
-                <p className={`font-bold ${t.type === 'income' ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {t.type === 'income' ? '+' : '-'} R$ {t.amount.toLocaleString()}
-                </p>
+        {activeView === 'transactions' && (
+          <div className="space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <h2 className="text-2xl font-bold">Transações</h2>
+              <div className="flex flex-wrap gap-2">
+                <button 
+                  onClick={exportToCSV}
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all"
+                >
+                  <Download size={18} />
+                  Exportar CSV
+                </button>
+                <button 
+                  onClick={() => setIsAddingTransaction(true)}
+                  className="flex items-center gap-2 px-4 py-2 bg-sublime text-white rounded-xl font-bold text-sm hover:bg-sublime/90 transition-all"
+                >
+                  <Plus size={18} />
+                  Nova Transação
+                </button>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Investment Plan */}
-      <div className="glass-card p-6">
-        <h3 className="font-bold text-xl mb-6 flex items-center gap-2">
-          <TrendingUp className="text-emerald-500" />
-          Plano de Investimentos Sugerido
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {INITIAL_INVESTMENTS.map((inv, i) => (
-            <div key={i} className="p-5 rounded-2xl bg-zinc-50 border border-zinc-100 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="font-bold text-zinc-900">{inv.objective}</h4>
-                <div className="p-1.5 bg-white rounded-lg shadow-sm">
-                  <DollarSign size={16} className="text-emerald-500" />
-                </div>
-              </div>
-              <p className="text-sm font-semibold text-emerald-700 bg-emerald-50 px-2 py-1 rounded inline-block">
-                {inv.where}
-              </p>
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                {inv.why}
-              </p>
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* Transaction Modal */}
+            {/* Filters */}
+            <div className="glass-card p-4 grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                <input 
+                  type="text" 
+                  placeholder="Buscar descrição..."
+                  className="w-full pl-10 pr-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <select 
+                className="w-full px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+              >
+                <option value="all">Todos os Tipos</option>
+                <option value="entrada">Entradas</option>
+                <option value="saida">Saídas</option>
+              </select>
+              <select 
+                className="w-full px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+              >
+                <option value="all">Todas as Categorias</option>
+                {[...CATEGORIES.entrada, ...CATEGORIES.saida].map(c => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </select>
+              <div className="flex items-center justify-end text-xs font-bold text-zinc-400">
+                {filteredTransactions.length} registros encontrados
+              </div>
+            </div>
+
+            {/* Transactions Table */}
+            <div className="glass-card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-zinc-100 bg-zinc-50/50">
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Data</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Descrição</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Categoria</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 text-right">Valor</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {filteredTransactions.map((t) => (
+                      <tr key={t.id} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="p-4 text-xs text-zinc-500">{format(parseISO(t.date), 'dd/MM/yyyy')}</td>
+                        <td className="p-4">
+                          <p className="text-sm font-bold text-zinc-900">{t.description}</p>
+                          <p className="text-[10px] text-zinc-400 uppercase">{t.payment_method}</p>
+                        </td>
+                        <td className="p-4">
+                          <span className="px-2 py-1 rounded-md bg-zinc-100 text-[10px] font-bold text-zinc-600 uppercase">
+                            {t.category}
+                          </span>
+                        </td>
+                        <td className={`p-4 text-sm font-bold text-right ${t.type === 'entrada' ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {t.type === 'entrada' ? '+' : '-'} R$ {t.amount.toLocaleString()}
+                        </td>
+                        <td className="p-4">
+                          <button 
+                            onClick={() => deleteTransaction(t.id)}
+                            className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredTransactions.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-12 text-center text-zinc-400 italic text-sm">
+                          Nenhuma transação encontrada com os filtros selecionados.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView !== 'dashboard' && activeView !== 'fixed_costs' && activeView !== 'mei' && activeView !== 'goals' && activeView !== 'transactions' && (
+          <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+            <div className="p-6 bg-zinc-100 rounded-full text-zinc-400">
+              <LayoutDashboard size={48} />
+            </div>
+            <h2 className="text-2xl font-bold text-zinc-900">Em Breve</h2>
+            <p className="text-zinc-500 max-w-xs">Esta funcionalidade está sendo preparada para o Studio Sublime.</p>
+            <button onClick={() => setActiveView('dashboard')} className="text-sublime font-bold">Voltar para Dashboard</button>
+          </div>
+        )}
+      </main>
+
+      {/* Modals */}
       <AnimatePresence>
         {isAddingTransaction && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl"
-            >
-              <h2 className="text-2xl font-bold mb-6">Nova Movimentação</h2>
-              <form onSubmit={addTransaction} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Descrição</label>
-                  <input required name="description" className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none" placeholder="Ex: Corte de Cabelo" />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl overflow-y-auto max-h-[90vh]">
+              <h2 className="text-xl font-bold mb-6">Nova Transação</h2>
+              <form onSubmit={handleAddTransaction} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Descrição</label>
+                  <input required name="description" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Compra de materiais" />
                 </div>
+                
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-700 mb-1">Valor (R$)</label>
-                    <input required name="amount" type="number" step="0.01" className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none" placeholder="0,00" />
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor</label>
+                    <input required name="amount" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="0.00" />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-700 mb-1">Tipo</label>
-                    <select name="type" className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none">
-                      <option value="income">Entrada</option>
-                      <option value="expense">Saída</option>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Tipo</label>
+                    <select 
+                      name="type" 
+                      className="w-full p-3 rounded-xl border border-zinc-200"
+                      onChange={(e) => {
+                        const type = e.target.value as 'entrada' | 'saida';
+                        // Trigger re-render to update categories
+                        setFormType(type);
+                      }}
+                    >
+                      <option value="entrada">Entrada</option>
+                      <option value="saida">Saída</option>
                     </select>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">Categoria</label>
-                  <select name="category" className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-zinc-900 outline-none">
-                    {[...CATEGORIES.income, ...CATEGORIES.expense].map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Categoria</label>
+                    <select name="category" className="w-full p-3 rounded-xl border border-zinc-200">
+                      {CATEGORIES[formType].map(c => (
+                        <option key={c.id} value={c.id}>{c.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Pagamento</label>
+                    <select name="payment_method" className="w-full p-3 rounded-xl border border-zinc-200">
+                      {PAYMENT_METHODS.map(pm => (
+                        <option key={pm.id} value={pm.id}>{pm.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Observações</label>
+                  <textarea name="notes" className="w-full p-3 rounded-xl border border-zinc-200 h-20" placeholder="Opcional..." />
+                </div>
+
+                <div className="flex items-center gap-2 py-2">
+                  <input type="checkbox" name="is_recurring" id="is_recurring" className="w-4 h-4 rounded border-zinc-300 text-sublime focus:ring-sublime" />
+                  <label htmlFor="is_recurring" className="text-sm text-zinc-600 font-medium">Transação Recorrente</label>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button type="button" onClick={() => setIsAddingTransaction(false)} className="flex-1 p-3 rounded-xl border font-bold text-zinc-500 hover:bg-zinc-50 transition-all">Cancelar</button>
+                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20">Salvar</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingFixedCost && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+              <h2 className="text-xl font-bold mb-6">Novo Custo Fixo</h2>
+              <form onSubmit={handleAddFixedCost} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do Custo</label>
+                  <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Aluguel do Studio" />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor Mensal</label>
+                    <input required name="amount" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="0.00" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Dia Vencimento</label>
+                    <input required name="due_day" type="number" min="1" max="31" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="1-31" />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Categoria</label>
+                  <select name="category" className="w-full p-3 rounded-xl border border-zinc-200">
+                    {FIXED_COST_CATEGORIES.map(c => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
                     ))}
                   </select>
                 </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Observações</label>
+                  <textarea name="notes" className="w-full p-3 rounded-xl border border-zinc-200 h-20" placeholder="Opcional..." />
+                </div>
+
                 <div className="flex gap-3 pt-4">
-                  <button 
-                    type="button"
-                    onClick={() => setIsAddingTransaction(false)}
-                    className="flex-1 px-6 py-3 rounded-xl border border-zinc-200 font-bold hover:bg-zinc-50"
-                  >
-                    Cancelar
-                  </button>
-                  <button 
-                    type="submit"
-                    className="flex-1 px-6 py-3 rounded-xl bg-zinc-900 text-white font-bold hover:bg-zinc-800 shadow-lg shadow-zinc-200"
-                  >
-                    Salvar
-                  </button>
+                  <button type="button" onClick={() => setIsAddingFixedCost(false)} className="flex-1 p-3 rounded-xl border font-bold text-zinc-500">Cancelar</button>
+                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold shadow-lg shadow-sublime/20">Salvar</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingMei && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+              <h2 className="text-xl font-bold mb-6">Nova Obrigação MEI</h2>
+              <form onSubmit={handleAddMei} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome da Obrigação</label>
+                  <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: DAS Janeiro 2026" />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor</label>
+                    <input required name="amount" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="0.00" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Vencimento</label>
+                    <input required name="due_date" type="date" className="w-full p-3 rounded-xl border border-zinc-200" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Tipo</label>
+                    <select name="type" className="w-full p-3 rounded-xl border border-zinc-200">
+                      <option value="das_mensal">DAS Mensal</option>
+                      <option value="dasn_simei">DASN-SIMEI</option>
+                      <option value="imposto">Imposto</option>
+                      <option value="taxa">Taxa</option>
+                      <option value="outro">Outro</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Status</label>
+                    <select name="status" className="w-full p-3 rounded-xl border border-zinc-200">
+                      <option value="pendente">Pendente</option>
+                      <option value="pago">Pago</option>
+                      <option value="atrasado">Atrasado</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Mês de Referência</label>
+                  <input name="reference_month" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: 2026-01" />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button type="button" onClick={() => setIsAddingMei(false)} className="flex-1 p-3 rounded-xl border font-bold text-zinc-500">Cancelar</button>
+                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold shadow-lg shadow-sublime/20">Salvar</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingGoal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+              <h2 className="text-xl font-bold mb-6">Nova Meta ou Sonho</h2>
+              <form onSubmit={handleAddGoal} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome da Meta</label>
+                  <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Reforma do Studio" />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor Objetivo</label>
+                    <input required name="target_amount" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="0.00" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor Inicial</label>
+                    <input name="current_amount" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="0.00" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Data Alvo</label>
+                    <input name="target_date" type="date" className="w-full p-3 rounded-xl border border-zinc-200" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Categoria</label>
+                    <select name="category" className="w-full p-3 rounded-xl border border-zinc-200">
+                      <option value="casamento">Casamento</option>
+                      <option value="reserva_emergencia">Reserva de Emergência</option>
+                      <option value="equipamento">Equipamento</option>
+                      <option value="reforma">Reforma</option>
+                      <option value="viagem">Viagem</option>
+                      <option value="outro">Outro</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Observações</label>
+                  <textarea name="notes" className="w-full p-3 rounded-xl border border-zinc-200 h-20" placeholder="Opcional..." />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button type="button" onClick={() => setIsAddingGoal(false)} className="flex-1 p-3 rounded-xl border font-bold text-zinc-500">Cancelar</button>
+                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold shadow-lg shadow-sublime/20">Salvar</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingService && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+              <h2 className="text-xl font-bold mb-6">Novo Cálculo de Serviço</h2>
+              <form onSubmit={handleAddService} className="space-y-4">
+                <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Nome do Serviço (ex: Progressiva)" />
+                <div className="grid grid-cols-2 gap-4">
+                  <input required name="materialCost" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Custo Material" />
+                  <input required name="energyCost" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Custo Energia" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <input required name="timeInMinutes" type="number" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Tempo (min)" />
+                  <input required name="hourlyRate" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Sua Hora (R$)" />
+                </div>
+                <input required name="currentPrice" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Preço Cobrado" />
+                <div className="flex gap-3 pt-4">
+                  <button type="button" onClick={() => setIsAddingService(false)} className="flex-1 p-3 rounded-xl border font-bold">Cancelar</button>
+                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold">Calcular</button>
                 </div>
               </form>
             </motion.div>

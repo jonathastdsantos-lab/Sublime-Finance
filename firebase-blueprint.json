@@ -1,0 +1,171 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction (income or expense)",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string", "description": "Descrição da transação" },
+        "amount": { "type": "number", "description": "Valor da transação" },
+        "type": { "type": "string", "enum": ["entrada", "saida"], "description": "Tipo: entrada ou saída" },
+        "category": { 
+          "type": "string", 
+          "enum": [
+            "servico", "material", "aluguel", "luz", "emprestimo", "mercado", "retirada", 
+            "pix_recebido", "pix_enviado", "pagamento", "mei_das", "imposto", "outro"
+          ],
+          "description": "Categoria da transação"
+        },
+        "date": { "type": "string", "format": "date", "description": "Data da transação" },
+        "payment_method": {
+          "type": "string",
+          "enum": ["dinheiro", "pix", "cartao_debito", "cartao_credito", "transferencia", "boleto"],
+          "description": "Forma de pagamento"
+        },
+        "notes": { "type": "string", "description": "Observações adicionais" },
+        "is_recurring": { "type": "boolean", "default": false, "description": "Se é uma despesa recorrente" },
+        "userId": { "type": "string" }
+      },
+      "required": ["description", "amount", "type", "category", "date", "userId"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Long term goal or dream",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Nome da meta" },
+        "target_amount": { "type": "number", "description": "Valor objetivo" },
+        "current_amount": { "type": "number", "default": 0, "description": "Valor acumulado" },
+        "target_date": { "type": "string", "format": "date", "description": "Data alvo" },
+        "category": {
+          "type": "string",
+          "enum": ["casamento", "reserva_emergencia", "equipamento", "reforma", "viagem", "outro"],
+          "default": "outro"
+        },
+        "notes": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "target_amount", "userId"]
+    },
+    "MeiObligation": {
+      "title": "MeiObligation",
+      "description": "MEI tax or obligation",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Nome da obrigação" },
+        "type": {
+          "type": "string",
+          "enum": ["das_mensal", "dasn_simei", "imposto", "taxa", "outro"],
+          "description": "Tipo de obrigação"
+        },
+        "amount": { "type": "number", "description": "Valor" },
+        "due_date": { "type": "string", "format": "date", "description": "Data de vencimento" },
+        "status": {
+          "type": "string",
+          "enum": ["pendente", "pago", "atrasado"],
+          "default": "pendente",
+          "description": "Status do pagamento"
+        },
+        "reference_month": { "type": "string", "description": "Mês de referência (ex: 2026-03)" },
+        "notes": { "type": "string", "description": "Observações" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "type", "amount", "due_date", "status", "userId"]
+    },
+    "ServiceCost": {
+      "title": "ServiceCost",
+      "description": "Cost calculation for a specific service",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "materialCost": { "type": "number" },
+        "energyCost": { "type": "number" },
+        "timeInMinutes": { "type": "number" },
+        "hourlyRate": { "type": "number" },
+        "currentPrice": { "type": "number" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "materialCost", "energyCost", "timeInMinutes", "hourlyRate", "currentPrice", "userId"]
+    },
+    "WeddingGoal": {
+      "title": "WeddingGoal",
+      "description": "Savings goal for the 2027 wedding",
+      "type": "object",
+      "properties": {
+        "target": { "type": "number" },
+        "current": { "type": "number" },
+        "monthlyAporte": { "type": "number" },
+        "userId": { "type": "string" }
+      },
+      "required": ["target", "current", "monthlyAporte", "userId"]
+    },
+    "Onboarding": {
+      "title": "Onboarding",
+      "description": "User profile and financial parameters from onboarding",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "primaryColor": { "type": "string" },
+        "revenueGoal": { "type": "number" },
+        "proLabore": { "type": "number" },
+        "expenseAlertThreshold": { "type": "number" },
+        "mainService": { "type": "string" },
+        "hasPartners": { "type": "boolean" },
+        "weddingGoalAmount": { "type": "number" },
+        "weddingDate": { "type": "string" },
+        "dataEntryMethod": { "type": "string" },
+        "onboardingCompleted": { "type": "boolean" }
+      },
+      "required": ["name", "primaryColor", "revenueGoal", "proLabore", "expenseAlertThreshold", "mainService", "hasPartners", "weddingGoalAmount", "weddingDate", "dataEntryMethod", "onboardingCompleted"]
+    },
+    "FixedCost": {
+      "title": "FixedCost",
+      "description": "Monthly fixed cost",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Nome do custo fixo" },
+        "category": {
+          "type": "string",
+          "enum": ["aluguel", "luz", "agua", "internet", "emprestimo", "mei_das", "seguro", "software", "outro"],
+          "description": "Categoria"
+        },
+        "amount": { "type": "number", "description": "Valor mensal" },
+        "due_day": { "type": "number", "description": "Dia do vencimento" },
+        "is_active": { "type": "boolean", "default": true, "description": "Se está ativo" },
+        "notes": { "type": "string", "description": "Observações" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "category", "amount", "due_day", "userId"]
+    }
+  },
+  "firestore": {
+    "transactions": {
+      "schema": "Transaction",
+      "description": "Collection of financial transactions"
+    },
+    "goals": {
+      "schema": "Goal",
+      "description": "Collection of monthly goals"
+    },
+    "serviceCosts": {
+      "schema": "ServiceCost",
+      "description": "Collection of service cost calculations"
+    },
+    "weddingGoals": {
+      "schema": "WeddingGoal",
+      "description": "Collection of wedding savings goals"
+    },
+    "onboarding": {
+      "schema": "Onboarding",
+      "description": "User onboarding data"
+    },
+    "fixedCosts": {
+      "schema": "FixedCost",
+      "description": "Collection of monthly fixed costs"
+    },
+    "meiObligations": {
+      "schema": "MeiObligation",
+      "description": "Collection of MEI obligations"
+    }
+  }
+}

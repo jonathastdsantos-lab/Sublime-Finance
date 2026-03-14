@@ -1,0 +1,198 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: transactions
+    // Fields: description (string), amount (number), type (string), category (string), date (string), userId (string)
+    //
+    // Collection: goals
+    // Fields: target (number), month (string), userId (string)
+    //
+    // Collection: serviceCosts
+    // Fields: name (string), materialCost (number), energyCost (number), timeInMinutes (number), hourlyRate (number), currentPrice (number), userId (string)
+    //
+    // Collection: weddingGoals
+    // Fields: target (number), current (number), monthlyAporte (number), userId (string)
+    //
+    // Collection: onboarding
+    // Document ID: userId
+    // Fields: name (string), primaryColor (string), revenueGoal (number), proLabore (number), expenseAlertThreshold (number), mainService (string), hasPartners (bool), weddingGoalAmount (number), weddingDate (string), dataEntryMethod (string), onboardingCompleted (bool)
+    //
+    // Collection: fixedCosts
+    // Fields: name (string), category (string), amount (number), due_day (number), is_active (bool), notes (string), userId (string)
+    //
+    // Collection: goals
+    // Fields: name (string), target_amount (number), current_amount (number), target_date (string), category (string), notes (string), userId (string)
+    //
+    // Collection: meiObligations
+    // Fields: name (string), type (string), amount (number), due_date (string), status (string), reference_month (string), notes (string), userId (string)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "jonathastdsantos@gmail.com" && request.auth.token.email_verified == true)
+        );
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Domain Validators
+    function isValidTransaction(data) {
+      let validCategories = [
+        "servico", "material", "aluguel", "luz", "emprestimo", "mercado", "retirada", 
+        "pix_recebido", "pix_enviado", "pagamento", "mei_das", "imposto", "outro"
+      ];
+      let validPaymentMethods = ["dinheiro", "pix", "cartao_debito", "cartao_credito", "transferencia", "boleto"];
+
+      return data.description is string && data.description.size() > 0 && data.description.size() < 100 &&
+             data.amount is number && data.amount >= 0 &&
+             data.type in ['entrada', 'saida'] &&
+             data.category in validCategories &&
+             data.date is string &&
+             data.userId == request.auth.uid &&
+             (!('payment_method' in data) || data.payment_method in validPaymentMethods) &&
+             (!('notes' in data) || data.notes is string) &&
+             (!('is_recurring' in data) || data.is_recurring is bool);
+    }
+
+    function isValidOnboarding(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 50 &&
+             data.primaryColor is string &&
+             data.revenueGoal is number &&
+             data.proLabore is number &&
+             data.expenseAlertThreshold is number &&
+             data.mainService is string &&
+             data.hasPartners is bool &&
+             data.weddingGoalAmount is number &&
+             data.weddingDate is string &&
+             data.dataEntryMethod is string &&
+             data.onboardingCompleted is bool;
+    }
+
+    function isValidServiceCost(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.materialCost is number &&
+             data.energyCost is number &&
+             data.timeInMinutes is number &&
+             data.hourlyRate is number &&
+             data.currentPrice is number &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidFixedCost(data) {
+      let validCategories = ["aluguel", "luz", "agua", "internet", "emprestimo", "mei_das", "seguro", "software", "outro"];
+      return data.name is string && data.name.size() > 0 &&
+             data.category in validCategories &&
+             data.amount is number && data.amount >= 0 &&
+             data.due_day is number && data.due_day >= 1 && data.due_day <= 31 &&
+             data.is_active is bool &&
+             (!('notes' in data) || data.notes is string) &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidGoal(data) {
+      let validCategories = ["casamento", "reserva_emergencia", "equipamento", "reforma", "viagem", "outro"];
+      return data.name is string && data.name.size() > 0 &&
+             data.target_amount is number && data.target_amount > 0 &&
+             data.current_amount is number && data.current_amount >= 0 &&
+             (!('target_date' in data) || data.target_date is string) &&
+             (!('category' in data) || data.category in validCategories) &&
+             (!('notes' in data) || data.notes is string) &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidMeiObligation(data) {
+      let validTypes = ["das_mensal", "dasn_simei", "imposto", "taxa", "outro"];
+      let validStatuses = ["pendente", "pago", "atrasado"];
+      return data.name is string && data.name.size() > 0 &&
+             data.type in validTypes &&
+             data.amount is number && data.amount >= 0 &&
+             data.due_date is string &&
+             data.status in validStatuses &&
+             (!('reference_month' in data) || data.reference_month is string) &&
+             (!('notes' in data) || data.notes is string) &&
+             data.userId == request.auth.uid;
+    }
+
+    match /transactions/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidTransaction(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /goals/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /serviceCosts/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidServiceCost(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidServiceCost(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /weddingGoals/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    match /onboarding/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidOnboarding(request.resource.data);
+      allow update: if isOwner(userId) && isValidOnboarding(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+
+    match /fixedCosts/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidFixedCost(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidFixedCost(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /goals/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidGoal(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidGoal(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /meiObligations/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidMeiObligation(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidMeiObligation(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}
