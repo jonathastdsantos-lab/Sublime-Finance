@@ -5,7 +5,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import twilio from "twilio";
 import sgMail from "@sendgrid/mail";
-import { MercadoPagoConfig, Payment } from "mercadopago";
 
 dotenv.config();
 
@@ -17,10 +16,6 @@ const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_T
 if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 }
-
-const mpClient = process.env.MERCADO_PAGO_ACCESS_TOKEN 
-  ? new MercadoPagoConfig({ accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN }) 
-  : null;
 
 async function startServer() {
   const app = express();
@@ -78,28 +73,6 @@ async function startServer() {
         html,
       });
       res.json({ success: true });
-    } catch (error: any) {
-      res.status(400).json({ error: error.message });
-    }
-  });
-
-  // 4. Mercado Pago - Create PIX Payment
-  app.post("/api/payments/pix", async (req, res) => {
-    const { transaction_amount, description, email } = req.body;
-    if (!mpClient) {
-      return res.status(500).json({ error: "Mercado Pago not configured" });
-    }
-    try {
-      const payment = new Payment(mpClient);
-      const result = await payment.create({
-        body: {
-          transaction_amount,
-          description,
-          payment_method_id: "pix",
-          payer: { email },
-        },
-      });
-      res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

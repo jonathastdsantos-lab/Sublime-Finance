@@ -30,6 +30,12 @@ service cloud.firestore {
     // Collection: meiObligations
     // Fields: name (string), type (string), amount (number), due_date (string), status (string), reference_month (string), notes (string), userId (string)
     //
+    // Collection: bank_accounts
+    // Fields: bankName (string), accountType (string), balance (number), currency (string), lastSync (string), institutionId (string), userId (string), status (string)
+    //
+    // Collection: bank_transactions
+    // Fields: bankAccountId (string), description (string), amount (number), date (string), category (string), type (string), userId (string)
+    //
     // ===============================================================
 
     // Helper Functions
@@ -132,6 +138,29 @@ service cloud.firestore {
              data.userId == request.auth.uid;
     }
 
+    function isValidBankAccount(data) {
+      let validAccountTypes = ["checking", "savings", "business"];
+      let validStatuses = ["active", "error", "disconnected"];
+      return data.bankName is string && data.bankName.size() > 0 &&
+             data.accountType in validAccountTypes &&
+             data.balance is number &&
+             data.currency is string &&
+             data.lastSync is string &&
+             data.institutionId is string &&
+             data.userId == request.auth.uid &&
+             data.status in validStatuses;
+    }
+
+    function isValidBankTransaction(data) {
+      return data.bankAccountId is string &&
+             data.description is string &&
+             data.amount is number &&
+             data.date is string &&
+             data.category is string &&
+             data.type in ["DEBIT", "CREDIT"] &&
+             data.userId == request.auth.uid;
+    }
+
     match /transactions/{id} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
@@ -185,6 +214,20 @@ service cloud.firestore {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && isValidMeiObligation(request.resource.data);
       allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidMeiObligation(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /bank_accounts/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidBankAccount(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidBankAccount(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /bank_transactions/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidBankTransaction(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidBankTransaction(request.resource.data);
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 

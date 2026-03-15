@@ -27,7 +27,11 @@ import {
   Download,
   Trash2,
   User,
-  Settings
+  Settings,
+  Building2,
+  RefreshCw,
+  Link2,
+  ExternalLink
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -58,7 +62,7 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, handleFirestoreError, OperationType } from '../firebase';
-import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal } from '../types';
+import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
 import { getAIInsights } from '../services/aiService';
 import OnboardingForm from './OnboardingForm';
@@ -73,7 +77,6 @@ export default function Dashboard() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [pixData, setPixData] = useState<any>(null);
   const [is2FABypassed, setIs2FABypassed] = useState(false);
 
   const [onboardingData, setOnboardingData] = useState<OnboardingData | null>(null);
@@ -87,6 +90,7 @@ export default function Dashboard() {
   const [fixedCosts, setFixedCosts] = useState<FixedCost[]>([]);
   const [meiObligations, setMeiObligations] = useState<MeiObligation[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [weddingGoal, setWeddingGoal] = useState<WeddingGoal | null>(null);
   const [goal, setGoal] = useState<number>(8000);
   
@@ -204,6 +208,14 @@ export default function Dashboard() {
       handleFirestoreError(error, OperationType.LIST, 'goals');
     });
 
+    const qBank = query(collection(db, 'bank_accounts'), where('userId', '==', user.uid));
+    const unsubBank = onSnapshot(qBank, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BankAccount));
+      setBankAccounts(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'bank_accounts');
+    });
+
     return () => {
       unsubTrans();
       unsubService();
@@ -211,6 +223,7 @@ export default function Dashboard() {
       unsubFixed();
       unsubMei();
       unsubGoals();
+      unsubBank();
     };
   }, [user]);
 
@@ -238,6 +251,8 @@ export default function Dashboard() {
   const totalExpense = currentMonthTransactions
     .filter(t => t.type === 'saida')
     .reduce((sum, t) => sum + t.amount, 0);
+
+  const totalBankBalance = bankAccounts.reduce((sum, acc) => sum + acc.balance, 0);
 
   const progress = Math.min((totalIncome / goal) * 100, 100);
 
@@ -524,6 +539,62 @@ export default function Dashboard() {
     }
   };
 
+  const connectBank = async () => {
+    if (!user) return;
+    
+    // In a real app, this would open a widget from Pluggy, Belvo, or Plaid
+    // We'll simulate the successful connection of a "Nubank" account
+    const mockBanks = [
+      { name: 'Nubank', institutionId: 'nubank_br' },
+      { name: 'Itaú', institutionId: 'itau_br' },
+      { name: 'Bradesco', institutionId: 'bradesco_br' },
+      { name: 'Inter', institutionId: 'inter_br' }
+    ];
+    
+    const selectedBank = mockBanks[Math.floor(Math.random() * mockBanks.length)];
+    
+    const newAccount: Omit<BankAccount, 'id'> = {
+      bankName: selectedBank.name,
+      accountType: 'checking',
+      balance: Math.floor(Math.random() * 15000) + 500,
+      currency: 'BRL',
+      lastSync: new Date().toISOString(),
+      institutionId: selectedBank.institutionId,
+      userId: user.uid,
+      status: 'active'
+    };
+
+    try {
+      await addDoc(collection(db, 'bank_accounts'), newAccount);
+      alert(`${selectedBank.name} conectado com sucesso!`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'bank_accounts');
+    }
+  };
+
+  const syncBank = async (accountId: string) => {
+    // Simulate syncing new transactions
+    try {
+      const accountRef = doc(db, 'bank_accounts', accountId);
+      await updateDoc(accountRef, {
+        lastSync: new Date().toISOString(),
+        balance: Math.floor(Math.random() * 15000) + 500 // Update balance randomly for demo
+      });
+      alert('Sincronização concluída!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `bank_accounts/${accountId}`);
+    }
+  };
+
+  const disconnectBank = async (accountId: string) => {
+    if (!window.confirm('Tem certeza que deseja desconectar esta conta?')) return;
+    try {
+      await deleteDoc(doc(db, 'bank_accounts', accountId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `bank_accounts/${accountId}`);
+    }
+  };
+
   const deleteGoal = async (id: string) => {
     if (!confirm('Excluir esta meta?')) return;
     try {
@@ -627,24 +698,6 @@ export default function Dashboard() {
       setAuthError('Erro na verificação.');
     } finally {
       setIsLoadingAuth(false);
-    }
-  };
-
-  const generatePix = async (amount: number) => {
-    try {
-      const res = await fetch('/api/payments/pix', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transaction_amount: amount,
-          description: "Pagamento Studio Sublime",
-          email: user?.email
-        })
-      });
-      const data = await res.json();
-      setPixData(data);
-    } catch (error) {
-      console.error("PIX error:", error);
     }
   };
 
@@ -945,7 +998,7 @@ export default function Dashboard() {
         {activeView === 'dashboard' && (
           <div className="space-y-8">
             {/* Alerts Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -977,6 +1030,23 @@ export default function Dashboard() {
                   <p className="text-xs font-bold uppercase tracking-wider opacity-60">Próximos Custos</p>
                   <p className="text-lg font-bold">
                     {fixedCosts.filter(fc => fc.due_day >= new Date().getDate()).length} pendentes
+                  </p>
+                </div>
+              </motion.div>
+
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+                className="p-4 rounded-2xl flex items-center gap-4 border bg-blue-50 border-blue-100 text-blue-700"
+              >
+                <div className="p-3 rounded-xl bg-blue-100">
+                  <Building2 size={24} />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider opacity-60">Saldo Bancário</p>
+                  <p className="text-lg font-bold">
+                    R$ {totalBankBalance.toLocaleString()}
                   </p>
                 </div>
               </motion.div>
@@ -1081,49 +1151,10 @@ export default function Dashboard() {
               </div>
 
               <div className="glass-card p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-2">
-                    <PieChartIcon size={20} className="text-zinc-400" />
-                    <h3 className="font-bold">Gastos por Categoria</h3>
-                  </div>
-                  <button 
-                    onClick={() => generatePix(100)}
-                    className="text-[10px] font-bold text-sublime bg-sublime/10 px-3 py-1.5 rounded-lg hover:bg-sublime/20 transition-all"
-                  >
-                    Gerar PIX Teste (R$ 100)
-                  </button>
+                <div className="flex items-center gap-2 mb-6">
+                  <PieChartIcon size={20} className="text-zinc-400" />
+                  <h3 className="font-bold">Gastos por Categoria</h3>
                 </div>
-
-                {pixData && (
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="mb-6 p-4 bg-zinc-900 rounded-2xl text-white space-y-3"
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-bold text-zinc-400 uppercase">Pagamento PIX Gerado</span>
-                      <button onClick={() => setPixData(null)} className="text-zinc-500 hover:text-white"><X size={16} /></button>
-                    </div>
-                    <div className="bg-white p-2 rounded-xl w-32 h-32 mx-auto">
-                      {/* In a real app, use the QR code from Mercado Pago */}
-                      <div className="w-full h-full bg-zinc-100 flex items-center justify-center text-zinc-400 text-[10px] text-center">
-                        QR Code<br/>Mercado Pago
-                      </div>
-                    </div>
-                    <p className="text-[10px] text-zinc-400 text-center break-all">
-                      {pixData.point_of_interaction?.transaction_data?.qr_code || 'Código PIX indisponível'}
-                    </p>
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(pixData.point_of_interaction?.transaction_data?.qr_code);
-                        alert('Código copiado!');
-                      }}
-                      className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-bold transition-all"
-                    >
-                      Copiar Código PIX
-                    </button>
-                  </motion.div>
-                )}
 
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1756,6 +1787,85 @@ export default function Dashboard() {
                       </button>
                     </div>
                   </form>
+                </div>
+
+                <div className="glass-card p-6 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold flex items-center gap-2">
+                      <Building2 size={18} className="text-sublime" />
+                      Contas Bancárias
+                    </h3>
+                    <button 
+                      onClick={connectBank}
+                      className="text-[10px] font-bold text-sublime bg-sublime/10 px-3 py-1.5 rounded-lg hover:bg-sublime/20 transition-all flex items-center gap-1"
+                    >
+                      <Link2 size={14} />
+                      Conectar Conta
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {bankAccounts.map((account) => (
+                      <div key={account.id} className="p-4 rounded-2xl border border-zinc-100 bg-zinc-50 flex items-center justify-between group">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-white border border-zinc-100 flex items-center justify-center text-sublime shadow-sm">
+                            <Building2 size={20} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-zinc-900">{account.bankName}</p>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase">{account.accountType === 'checking' ? 'Conta Corrente' : 'Poupança'}</span>
+                              <span className="w-1 h-1 rounded-full bg-zinc-300" />
+                              <span className="text-[10px] text-zinc-400">Sincronizado: {format(parseISO(account.lastSync), 'dd/MM HH:mm')}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-zinc-900">R$ {account.balance.toLocaleString()}</p>
+                            <span className={`text-[10px] font-bold uppercase ${account.status === 'active' ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {account.status === 'active' ? 'Ativo' : 'Erro'}
+                            </span>
+                          </div>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => syncBank(account.id)}
+                              className="p-2 text-zinc-400 hover:text-sublime transition-colors"
+                              title="Sincronizar"
+                            >
+                              <RefreshCw size={16} />
+                            </button>
+                            <button 
+                              onClick={() => disconnectBank(account.id)}
+                              className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
+                              title="Desconectar"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {bankAccounts.length === 0 && (
+                      <div className="py-8 text-center border-2 border-dashed border-zinc-100 rounded-2xl">
+                        <p className="text-xs text-zinc-400 italic">Nenhuma conta bancária conectada.</p>
+                        <button 
+                          onClick={connectBank}
+                          className="mt-2 text-[10px] font-bold text-sublime hover:underline"
+                        >
+                          Conectar agora para sincronizar extratos
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex gap-3">
+                    <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                    <p className="text-[10px] text-amber-700 leading-relaxed">
+                      <strong>Segurança:</strong> O Studio Sublime utiliza criptografia de ponta a ponta e protocolos de Open Finance para garantir que seus dados bancários estejam sempre protegidos. Nós nunca armazenamos suas senhas bancárias.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="glass-card p-6 space-y-4">

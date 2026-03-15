@@ -136,6 +136,37 @@
         "userId": { "type": "string" }
       },
       "required": ["name", "category", "amount", "due_day", "userId"]
+    },
+    "BankAccount": {
+      "title": "BankAccount",
+      "description": "Bank account connected via Open Finance",
+      "type": "object",
+      "properties": {
+        "bankName": { "type": "string" },
+        "accountType": { "type": "string", "enum": ["checking", "savings", "business"] },
+        "balance": { "type": "number" },
+        "currency": { "type": "string" },
+        "lastSync": { "type": "string", "format": "date-time" },
+        "institutionId": { "type": "string" },
+        "userId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "error", "disconnected"] }
+      },
+      "required": ["bankName", "accountType", "balance", "currency", "lastSync", "institutionId", "userId", "status"]
+    },
+    "BankTransaction": {
+      "title": "BankTransaction",
+      "description": "Transaction from a connected bank account",
+      "type": "object",
+      "properties": {
+        "bankAccountId": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" },
+        "category": { "type": "string" },
+        "type": { "type": "string", "enum": ["DEBIT", "CREDIT"] },
+        "userId": { "type": "string" }
+      },
+      "required": ["bankAccountId", "description", "amount", "date", "category", "type", "userId"]
     }
   },
   "firestore": {
@@ -166,6 +197,14 @@
     "meiObligations": {
       "schema": "MeiObligation",
       "description": "Collection of MEI obligations"
+    },
+    "bank_accounts": {
+      "schema": "BankAccount",
+      "description": "Collection of connected bank accounts"
+    },
+    "bank_transactions": {
+      "schema": "BankTransaction",
+      "description": "Collection of bank transactions"
     }
   }
 }

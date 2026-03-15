@@ -107,3 +107,26 @@ export interface FixedCost {
   notes?: string;
   userId: string;
 }
+
+export interface BankAccount {
+  id: string;
+  bankName: string;
+  accountType: 'checking' | 'savings' | 'business';
+  balance: number;
+  currency: string;
+  lastSync: string;
+  institutionId: string;
+  userId: string;
+  status: 'active' | 'error' | 'disconnected';
+}
+
+export interface BankTransaction {
+  id: string;
+  bankAccountId: string;
+  description: string;
+  amount: number;
+  date: string;
+  category: string;
+  type: 'DEBIT' | 'CREDIT';
+  userId: string;
+}
