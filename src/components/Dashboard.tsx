@@ -31,7 +31,12 @@ import {
   Building2,
   RefreshCw,
   Link2,
-  ExternalLink
+  ExternalLink,
+  Camera,
+  HelpCircle,
+  Info,
+  BookOpen,
+  BarChart as BarChartIcon
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -48,6 +53,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInDays, parseISO, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import StatementImporter from './StatementImporter';
 import { 
   collection, 
   query, 
@@ -95,17 +101,33 @@ export default function Dashboard() {
   const [goal, setGoal] = useState<number>(8000);
   
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
+  const [isImportingStatement, setIsImportingStatement] = useState(false);
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [formType, setFormType] = useState<'entrada' | 'saida'>('entrada');
   const [isAddingService, setIsAddingService] = useState(false);
   const [isAddingFixedCost, setIsAddingFixedCost] = useState(false);
   const [isAddingMei, setIsAddingMei] = useState(false);
   const [isAddingGoal, setIsAddingGoal] = useState(false);
+  const [isShowingBankGuide, setIsShowingBankGuide] = useState(false);
+
+  useEffect(() => {
+    if (onboardingData?.primaryColor) {
+      document.documentElement.style.setProperty('--primary-color', onboardingData.primaryColor);
+      // Generate a darker version for the hover state (simple approach)
+      document.documentElement.style.setProperty('--primary-color-dark', onboardingData.primaryColor + 'dd');
+    }
+  }, [onboardingData?.primaryColor]);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterType, setFilterType] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [transactionToDelete, setTransactionToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     const testConnection = async () => {
@@ -231,7 +253,7 @@ export default function Dashboard() {
     if (!user || transactions.length === 0) return;
     const fetchAI = async () => {
       setIsLoadingAI(true);
-      const insights = await getAIInsights(transactions, goal, totalIncome);
+      const insights = await getAIInsights(transactions, goal, totalIncome, onboardingData?.companyName);
       setAiInsights(insights);
       setIsLoadingAI(false);
     };
@@ -278,7 +300,12 @@ export default function Dashboard() {
     const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = filterCategory === 'all' || t.category === filterCategory;
     const matchesType = filterType === 'all' || t.type === filterType;
-    return matchesSearch && matchesCategory && matchesType;
+    
+    const transactionDate = new Date(t.date);
+    const matchesStartDate = !startDate || transactionDate >= new Date(startDate);
+    const matchesEndDate = !endDate || transactionDate <= new Date(endDate + 'T23:59:59');
+    
+    return matchesSearch && matchesCategory && matchesType && matchesStartDate && matchesEndDate;
   });
 
   // Pie Chart Data
@@ -306,19 +333,41 @@ export default function Dashboard() {
     e.preventDefault();
     if (!user) return;
     const formData = new FormData(e.currentTarget);
+    
+    const amount = Number(formData.get('amount'));
+    const date = formData.get('date') as string;
+    
+    if (isNaN(amount) || amount <= 0) {
+      setAuthError("O valor deve ser um número positivo.");
+      return;
+    }
+    
+    if (!date) {
+      setAuthError("A data é obrigatória.");
+      return;
+    }
+
     try {
-      await addDoc(collection(db, 'transactions'), {
+      const transactionData = {
         description: formData.get('description'),
-        amount: Number(formData.get('amount')),
+        amount: amount,
         type: formData.get('type'),
         category: formData.get('category'),
         payment_method: formData.get('payment_method'),
         notes: formData.get('notes'),
         is_recurring: formData.get('is_recurring') === 'on',
-        date: new Date().toISOString(),
+        date: date,
         userId: user.uid
-      });
-      setIsAddingTransaction(false);
+      };
+
+      if (editingTransaction) {
+        await updateDoc(doc(db, 'transactions', editingTransaction.id), transactionData);
+        setEditingTransaction(null);
+      } else {
+        await addDoc(collection(db, 'transactions'), transactionData);
+        setIsAddingTransaction(false);
+      }
+      setAuthError(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'transactions');
     }
@@ -485,7 +534,7 @@ export default function Dashboard() {
 
     setIsLoadingAI(true);
     try {
-      const text = `Lembrete Studio Sublime:\n\n` +
+      const text = `Lembrete ${onboardingData?.companyName || 'Studio Sublime'}:\n\n` +
         (pendingMei.length > 0 ? `MEI Pendentes:\n${pendingMei.map(m => `- ${m.name}: R$ ${m.amount}`).join('\n')}\n\n` : '') +
         (upcomingFixed.length > 0 ? `Custos Fixos Próximos:\n${upcomingFixed.map(fc => `- ${fc.name}: R$ ${fc.amount} (Dia ${fc.due_day})`).join('\n')}` : '');
 
@@ -494,7 +543,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: user.email,
-          subject: 'Lembrete de Vencimentos - Studio Sublime',
+          subject: `Lembrete de Vencimentos - ${onboardingData?.companyName || 'Studio Sublime'}`,
           text,
           html: `<div style="font-family: sans-serif;">${text.replace(/\n/g, '<br>')}</div>`
         })
@@ -509,9 +558,9 @@ export default function Dashboard() {
   };
 
   const deleteTransaction = async (id: string) => {
-    if (!window.confirm('Excluir esta transação?')) return;
     try {
       await deleteDoc(doc(db, 'transactions', id));
+      setTransactionToDelete(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `transactions/${id}`);
     }
@@ -522,12 +571,12 @@ export default function Dashboard() {
     if (!user) return;
     const formData = new FormData(e.currentTarget);
     
-    const updatedData = {
+    const updatedData: any = {
       name: formData.get('name') as string,
+      companyName: formData.get('companyName') as string,
+      photoURL: profilePhoto || onboardingData?.photoURL || '',
       mainService: formData.get('mainService') as string,
       revenueGoal: Number(formData.get('revenueGoal')),
-      weddingGoalAmount: Number(formData.get('weddingGoalAmount')),
-      weddingDate: formData.get('weddingDate') as string,
       userId: user.uid
     };
 
@@ -536,6 +585,17 @@ export default function Dashboard() {
       alert('Configurações atualizadas com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `onboarding/${user.uid}`);
+    }
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePhoto(reader.result as string);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -587,11 +647,22 @@ export default function Dashboard() {
   };
 
   const disconnectBank = async (accountId: string) => {
-    if (!window.confirm('Tem certeza que deseja desconectar esta conta?')) return;
+    // In an iframe, window.confirm can be problematic. 
+    // For now, we'll proceed directly or you could implement a custom modal.
+    // Given the request "não funciona o icone de excluir", removing the confirm might fix it if it was being blocked.
     try {
       await deleteDoc(doc(db, 'bank_accounts', accountId));
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `bank_accounts/${accountId}`);
+    }
+  };
+
+  const updatePrimaryColor = async (color: string) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'onboarding', user.uid), { primaryColor: color }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `onboarding/${user.uid}`);
     }
   };
 
@@ -734,7 +805,7 @@ export default function Dashboard() {
                 {authMode === 'register' && (
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do Studio</label>
-                    <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder="Ex: Studio Sublime" />
+                    <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder={`Ex: ${onboardingData?.companyName || 'Studio Sublime'}`} />
                   </div>
                 )}
                 <div className="space-y-1">
@@ -868,14 +939,14 @@ export default function Dashboard() {
     );
   }
 
-  const monthsRemaining = onboardingData ? (() => {
+  const monthsRemaining = onboardingData?.weddingDate ? (() => {
     const today = new Date();
     const target = new Date(onboardingData.weddingDate);
     const diff = (target.getFullYear() - today.getFullYear()) * 12 + (target.getMonth() - today.getMonth());
     return diff > 0 ? diff : 0;
   })() : 0;
 
-  const monthlyAporte = onboardingData && monthsRemaining > 0 
+  const monthlyAporte = onboardingData?.weddingGoalAmount && monthsRemaining > 0 
     ? onboardingData.weddingGoalAmount / monthsRemaining 
     : 0;
 
@@ -884,10 +955,16 @@ export default function Dashboard() {
       {/* Sidebar - Desktop */}
       <aside className="hidden md:flex flex-col w-72 bg-white border-r border-zinc-100 p-6 space-y-8 sticky top-0 h-screen overflow-y-auto">
         <div className="flex items-center gap-3 px-2">
-          <div className="w-10 h-10 bg-sublime rounded-xl flex items-center justify-center shadow-lg shadow-sublime/20">
-            <DollarSign className="text-white" size={20} />
-          </div>
-          <h2 className="text-xl font-bold font-display text-sublime">Sublime</h2>
+          {onboardingData?.photoURL ? (
+            <img src={onboardingData.photoURL} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg shadow-sublime/20" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-10 h-10 bg-sublime rounded-xl flex items-center justify-center shadow-lg shadow-sublime/20">
+              <DollarSign className="text-white" size={20} />
+            </div>
+          )}
+          <h2 className="text-xl font-bold font-display text-sublime truncate">
+            {onboardingData?.companyName || 'Sublime'}
+          </h2>
         </div>
 
         <nav className="flex-1 space-y-2">
@@ -908,7 +985,9 @@ export default function Dashboard() {
           </div>
           <p className="text-[10px] text-zinc-500 leading-relaxed">
             {onboardingData 
-              ? `${onboardingData.name}, se você aumentar as vendas de '${onboardingData.mainService}' em 10%, conseguiremos antecipar a meta do casamento em 3 meses!` 
+              ? (onboardingData.weddingGoalAmount 
+                  ? `${onboardingData.name}, se você aumentar as vendas de '${onboardingData.mainService}' em 10%, conseguiremos antecipar a meta do casamento em 3 meses!`
+                  : `${onboardingData.name}, se você aumentar as vendas de '${onboardingData.mainService}' em 10%, sua meta de faturamento será atingida mais rápido!`)
               : 'Peça sugestões e análises inteligentes para o seu Studio.'}
           </p>
         </div>
@@ -925,10 +1004,16 @@ export default function Dashboard() {
       {/* Mobile Header */}
       <header className="md:hidden bg-white border-b border-zinc-100 p-4 sticky top-0 z-40 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-sublime rounded-lg flex items-center justify-center">
-            <DollarSign className="text-white" size={16} />
-          </div>
-          <h2 className="font-bold font-display text-sublime">Sublime</h2>
+          {onboardingData?.photoURL ? (
+            <img src={onboardingData.photoURL} alt="Logo" className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-8 h-8 bg-sublime rounded-lg flex items-center justify-center">
+              <DollarSign className="text-white" size={16} />
+            </div>
+          )}
+          <h2 className="font-bold font-display text-sublime truncate max-w-[150px]">
+            {onboardingData?.companyName || 'Sublime'}
+          </h2>
         </div>
         <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-zinc-500">
           <Menu size={24} />
@@ -986,13 +1071,23 @@ export default function Dashboard() {
               <h1 className="text-lg font-bold text-zinc-900">{user.displayName?.split(' ')[0]}</h1>
             </div>
           </div>
-          <button 
-            onClick={() => setIsAddingTransaction(true)}
-            className="bg-sublime text-white p-2.5 rounded-xl shadow-lg shadow-sublime/20 md:px-4 md:flex md:items-center md:gap-2"
-          >
-            <Plus size={20} />
-            <span className="hidden md:inline font-bold">Novo</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setIsImportingStatement(true)}
+              className="bg-zinc-100 text-zinc-600 p-2.5 rounded-xl hover:bg-zinc-200 transition-all md:px-4 md:flex md:items-center md:gap-2"
+              title="Importar Extrato"
+            >
+              <FileText size={20} />
+              <span className="hidden md:inline font-bold">Importar</span>
+            </button>
+            <button 
+              onClick={() => setIsAddingTransaction(true)}
+              className="bg-sublime text-white p-2.5 rounded-xl shadow-lg shadow-sublime/20 md:px-4 md:flex md:items-center md:gap-2"
+            >
+              <Plus size={20} />
+              <span className="hidden md:inline font-bold">Novo</span>
+            </button>
+          </div>
         </div>
 
         {activeView === 'dashboard' && (
@@ -1051,7 +1146,7 @@ export default function Dashboard() {
                 </div>
               </motion.div>
 
-              {onboardingData && (
+              {onboardingData?.weddingGoalAmount && (
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1113,7 +1208,9 @@ export default function Dashboard() {
                       <>
                         {onboardingData && (
                           <p className="text-xs text-white/90 leading-relaxed">
-                            • {onboardingData.name}, aumentar as vendas de '{onboardingData.mainService}' em 10% antecipa o casamento em 3 meses!
+                            {onboardingData?.weddingGoalAmount 
+                          ? `• ${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% antecipa o casamento em 3 meses!`
+                          : `• ${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% acelerará o crescimento do seu Studio!`}
                           </p>
                         )}
                         {aiInsights.slice(0, 1).map((ins, i) => (
@@ -1243,11 +1340,23 @@ export default function Dashboard() {
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className={`font-bold text-sm ${t.type === 'entrada' ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {t.type === 'entrada' ? '+' : '-'} R$ {t.amount.toLocaleString()}
-                      </p>
-                      {t.is_recurring && <span className="text-[8px] font-bold uppercase text-zinc-400">Recorrente</span>}
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <p className={`font-bold text-sm ${t.type === 'entrada' ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {t.type === 'entrada' ? '+' : '-'} R$ {t.amount.toLocaleString()}
+                        </p>
+                        {t.is_recurring && <span className="text-[8px] font-bold uppercase text-zinc-400">Recorrente</span>}
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setEditingTransaction(t);
+                          setFormType(t.type as 'entrada' | 'saida');
+                        }}
+                        className="p-2 text-zinc-400 hover:text-sublime transition-colors"
+                        title="Editar"
+                      >
+                        <Settings size={16} />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -1617,38 +1726,97 @@ export default function Dashboard() {
             </div>
 
             {/* Filters */}
-            <div className="glass-card p-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
-                <input 
-                  type="text" 
-                  placeholder="Buscar descrição..."
-                  className="w-full pl-10 pr-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+            <div className="glass-card p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                  <input 
+                    type="text" 
+                    placeholder="Buscar descrição..."
+                    className="w-full pl-10 pr-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <select 
+                  className="w-full px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                >
+                  <option value="all">Todos os Tipos</option>
+                  <option value="entrada">Entradas</option>
+                  <option value="saida">Saídas</option>
+                </select>
+                <select 
+                  className="w-full px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value)}
+                >
+                  <option value="all">Todas as Categorias</option>
+                  {Array.from(new Map([...CATEGORIES.entrada, ...CATEGORIES.saida].map(c => [c.id, c])).values()).map(c => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
+                <div className="flex items-center justify-end text-xs font-bold text-zinc-400">
+                  {filteredTransactions.length} registros encontrados
+                </div>
               </div>
-              <select 
-                className="w-full px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-              >
-                <option value="all">Todos os Tipos</option>
-                <option value="entrada">Entradas</option>
-                <option value="saida">Saídas</option>
-              </select>
-              <select 
-                className="w-full px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value)}
-              >
-                <option value="all">Todas as Categorias</option>
-                {[...CATEGORIES.entrada, ...CATEGORIES.saida].map(c => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
-                ))}
-              </select>
-              <div className="flex items-center justify-end text-xs font-bold text-zinc-400">
-                {filteredTransactions.length} registros encontrados
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-zinc-100 pt-4">
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 whitespace-nowrap">Início:</label>
+                  <input 
+                    type="date" 
+                    className="flex-1 px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 whitespace-nowrap">Fim:</label>
+                  <input 
+                    type="date" 
+                    className="flex-1 px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Category Spending Chart */}
+            <div className="glass-card p-6">
+              <h3 className="font-bold text-zinc-900 mb-6 flex items-center gap-2">
+                <BarChartIcon size={18} className="text-sublime" />
+                Gastos por Categoria (Mês Atual)
+              </h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={pieData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis 
+                      dataKey="name" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#94a3b8', fontSize: 10 }} 
+                    />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      tickFormatter={(value) => `R$ ${value}`}
+                    />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                      formatter={(value: number) => [`R$ ${value.toLocaleString()}`, 'Gasto']}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </div>
 
@@ -1672,6 +1840,9 @@ export default function Dashboard() {
                         <td className="p-4">
                           <p className="text-sm font-bold text-zinc-900">{t.description}</p>
                           <p className="text-[10px] text-zinc-400 uppercase">{t.payment_method}</p>
+                          {t.notes && (
+                            <p className="text-[10px] text-zinc-400 italic mt-1">Obs: {t.notes}</p>
+                          )}
                         </td>
                         <td className="p-4">
                           <span className="px-2 py-1 rounded-md bg-zinc-100 text-[10px] font-bold text-zinc-600 uppercase">
@@ -1682,12 +1853,25 @@ export default function Dashboard() {
                           {t.type === 'entrada' ? '+' : '-'} R$ {t.amount.toLocaleString()}
                         </td>
                         <td className="p-4">
-                          <button 
-                            onClick={() => deleteTransaction(t.id)}
-                            className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => {
+                                setEditingTransaction(t);
+                                setFormType(t.type as 'entrada' | 'saida');
+                              }}
+                              className="p-2 text-zinc-400 hover:text-sublime transition-colors"
+                              title="Editar"
+                            >
+                              <Settings size={16} />
+                            </button>
+                            <button 
+                              onClick={() => setTransactionToDelete(t.id)}
+                              className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
+                              title="Excluir"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1710,7 +1894,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-zinc-900 font-display">Perfil & Ajustes</h2>
-                <p className="text-sm text-zinc-500">Personalize sua experiência no Studio Sublime.</p>
+                <p className="text-sm text-zinc-500">Personalize sua experiência no {onboardingData?.companyName || 'Studio Sublime'}.</p>
               </div>
             </div>
 
@@ -1725,6 +1909,16 @@ export default function Dashboard() {
                   <form onSubmit={handleUpdateSettings} className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome da Empresa</label>
+                        <input 
+                          required 
+                          name="companyName" 
+                          defaultValue={onboardingData?.companyName || 'Studio Sublime'}
+                          className="w-full p-3 rounded-xl border border-zinc-200" 
+                          placeholder="Ex: Studio Sublime"
+                        />
+                      </div>
+                      <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do Profissional</label>
                         <input 
                           required 
@@ -1733,6 +1927,9 @@ export default function Dashboard() {
                           className="w-full p-3 rounded-xl border border-zinc-200" 
                         />
                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Serviço Principal</label>
                         <input 
@@ -1742,9 +1939,6 @@ export default function Dashboard() {
                           className="w-full p-3 rounded-xl border border-zinc-200" 
                         />
                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Meta de Faturamento Mensal (R$)</label>
                         <input 
@@ -1755,27 +1949,6 @@ export default function Dashboard() {
                           className="w-full p-3 rounded-xl border border-zinc-200" 
                         />
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Custo do Casamento (R$)</label>
-                        <input 
-                          required 
-                          name="weddingGoalAmount" 
-                          type="number"
-                          defaultValue={onboardingData?.weddingGoalAmount}
-                          className="w-full p-3 rounded-xl border border-zinc-200" 
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Data do Casamento</label>
-                      <input 
-                        required 
-                        name="weddingDate" 
-                        type="date"
-                        defaultValue={onboardingData?.weddingDate}
-                        className="w-full p-3 rounded-xl border border-zinc-200" 
-                      />
                     </div>
 
                     <div className="pt-4">
@@ -1794,6 +1967,13 @@ export default function Dashboard() {
                     <h3 className="font-bold flex items-center gap-2">
                       <Building2 size={18} className="text-sublime" />
                       Contas Bancárias
+                      <button 
+                        onClick={() => setIsShowingBankGuide(true)}
+                        className="p-1 text-zinc-400 hover:text-sublime transition-colors"
+                        title="Guia de Conexão"
+                      >
+                        <HelpCircle size={14} />
+                      </button>
                     </h3>
                     <button 
                       onClick={connectBank}
@@ -1863,7 +2043,7 @@ export default function Dashboard() {
                   <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex gap-3">
                     <AlertTriangle size={18} className="text-amber-600 shrink-0" />
                     <p className="text-[10px] text-amber-700 leading-relaxed">
-                      <strong>Segurança:</strong> O Studio Sublime utiliza criptografia de ponta a ponta e protocolos de Open Finance para garantir que seus dados bancários estejam sempre protegidos. Nós nunca armazenamos suas senhas bancárias.
+                      <strong>Segurança:</strong> O {onboardingData?.companyName || 'Studio Sublime'} utiliza criptografia de ponta a ponta e protocolos de Open Finance para garantir que seus dados bancários estejam sempre protegidos. Nós nunca armazenamos suas senhas bancárias.
                     </p>
                   </div>
                 </div>
@@ -1873,23 +2053,35 @@ export default function Dashboard() {
                     <Sparkles size={18} className="text-sublime" />
                     Personalização Visual
                   </h3>
-                  <p className="text-sm text-zinc-500">Escolha como o Studio Sublime deve se parecer para você.</p>
+                  <p className="text-sm text-zinc-500">Escolha como o {onboardingData?.companyName || 'Studio Sublime'} deve se parecer para você.</p>
                   
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <button className="p-4 rounded-2xl border-2 border-sublime bg-white flex flex-col items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-sublime shadow-sm" />
+                    <button 
+                      onClick={() => updatePrimaryColor('#8b5cf6')}
+                      className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${onboardingData?.primaryColor === '#8b5cf6' ? 'border-sublime bg-sublime/5' : 'border-zinc-100 bg-white hover:border-zinc-200'}`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-[#8b5cf6] shadow-sm" />
                       <span className="text-[10px] font-bold uppercase">Sublime (Padrão)</span>
                     </button>
-                    <button className="p-4 rounded-2xl border-2 border-zinc-100 bg-white flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
-                      <div className="w-8 h-8 rounded-full bg-zinc-900 shadow-sm" />
-                      <span className="text-[10px] font-bold uppercase">Dark Mode</span>
+                    <button 
+                      onClick={() => updatePrimaryColor('#18181b')}
+                      className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${onboardingData?.primaryColor === '#18181b' ? 'border-sublime bg-sublime/5' : 'border-zinc-100 bg-white hover:border-zinc-200'}`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-[#18181b] shadow-sm" />
+                      <span className="text-[10px] font-bold uppercase">Onyx</span>
                     </button>
-                    <button className="p-4 rounded-2xl border-2 border-zinc-100 bg-white flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
-                      <div className="w-8 h-8 rounded-full bg-rose-400 shadow-sm" />
+                    <button 
+                      onClick={() => updatePrimaryColor('#fb7185')}
+                      className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${onboardingData?.primaryColor === '#fb7185' ? 'border-sublime bg-sublime/5' : 'border-zinc-100 bg-white hover:border-zinc-200'}`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-[#fb7185] shadow-sm" />
                       <span className="text-[10px] font-bold uppercase">Rose Gold</span>
                     </button>
-                    <button className="p-4 rounded-2xl border-2 border-zinc-100 bg-white flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
-                      <div className="w-8 h-8 rounded-full bg-emerald-400 shadow-sm" />
+                    <button 
+                      onClick={() => updatePrimaryColor('#34d399')}
+                      className={`p-4 rounded-2xl border-2 flex flex-col items-center gap-2 transition-all ${onboardingData?.primaryColor === '#34d399' ? 'border-sublime bg-sublime/5' : 'border-zinc-100 bg-white hover:border-zinc-200'}`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-[#34d399] shadow-sm" />
                       <span className="text-[10px] font-bold uppercase">Emerald</span>
                     </button>
                   </div>
@@ -1898,12 +2090,23 @@ export default function Dashboard() {
 
               <div className="space-y-6">
                 <div className="glass-card p-6 text-center space-y-4">
-                  <div className="w-20 h-20 bg-sublime/10 rounded-full flex items-center justify-center mx-auto text-sublime">
-                    <User size={40} />
+                  <div className="relative group mx-auto w-24 h-24">
+                    <div className="w-24 h-24 bg-sublime/10 rounded-full flex items-center justify-center overflow-hidden text-sublime border-4 border-white shadow-xl">
+                      {(profilePhoto || onboardingData?.photoURL) ? (
+                        <img src={profilePhoto || onboardingData?.photoURL} alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <User size={48} />
+                      )}
+                    </div>
+                    <label className="absolute bottom-0 right-0 p-2 bg-white rounded-full shadow-lg border border-zinc-100 cursor-pointer hover:bg-zinc-50 transition-all">
+                      <Camera size={16} className="text-sublime" />
+                      <input type="file" className="hidden" accept="image/*" onChange={handlePhotoUpload} />
+                    </label>
                   </div>
                   <div>
                     <h3 className="font-bold text-lg">{onboardingData?.name}</h3>
-                    <p className="text-xs text-zinc-500">{user?.email}</p>
+                    <p className="text-xs text-zinc-500">{onboardingData?.companyName || 'Studio Sublime'}</p>
+                    <p className="text-[10px] text-zinc-400 mt-1">{user?.email}</p>
                   </div>
                   <div className="pt-4 border-t border-zinc-100">
                     <p className="text-[10px] font-bold uppercase text-zinc-400 mb-2">Status da Conta</p>
@@ -1933,7 +2136,7 @@ export default function Dashboard() {
               <LayoutDashboard size={48} />
             </div>
             <h2 className="text-2xl font-bold text-zinc-900">Em Breve</h2>
-            <p className="text-zinc-500 max-w-xs">Esta funcionalidade está sendo preparada para o Studio Sublime.</p>
+            <p className="text-zinc-500 max-w-xs">Esta funcionalidade está sendo preparada para o {onboardingData?.companyName || 'Studio Sublime'}.</p>
             <button onClick={() => setActiveView('dashboard')} className="text-sublime font-bold">Voltar para Dashboard</button>
           </div>
         )}
@@ -1941,29 +2144,51 @@ export default function Dashboard() {
 
       {/* Modals */}
       <AnimatePresence>
-        {isAddingTransaction && (
+        {(isAddingTransaction || editingTransaction) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl overflow-y-auto max-h-[90vh]">
-              <h2 className="text-xl font-bold mb-6">Nova Transação</h2>
+              <h2 className="text-xl font-bold mb-6">{editingTransaction ? 'Editar Transação' : 'Nova Transação'}</h2>
               <form onSubmit={handleAddTransaction} className="space-y-4">
+                {authError && (
+                  <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs font-bold flex items-center gap-2">
+                    <AlertTriangle size={14} />
+                    {authError}
+                  </div>
+                )}
+                
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Descrição</label>
-                  <input required name="description" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Compra de materiais" />
+                  <input 
+                    required 
+                    name="description" 
+                    defaultValue={editingTransaction?.description}
+                    className="w-full p-3 rounded-xl border border-zinc-200" 
+                    placeholder="Ex: Compra de materiais" 
+                  />
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor</label>
-                    <input required name="amount" type="number" step="0.01" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="0.00" />
+                    <input 
+                      required 
+                      name="amount" 
+                      type="number" 
+                      step="0.01" 
+                      min="0.01"
+                      defaultValue={editingTransaction?.amount}
+                      className="w-full p-3 rounded-xl border border-zinc-200" 
+                      placeholder="0.00" 
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Tipo</label>
                     <select 
                       name="type" 
+                      defaultValue={editingTransaction?.type || 'entrada'}
                       className="w-full p-3 rounded-xl border border-zinc-200"
                       onChange={(e) => {
                         const type = e.target.value as 'entrada' | 'saida';
-                        // Trigger re-render to update categories
                         setFormType(type);
                       }}
                     >
@@ -1976,7 +2201,11 @@ export default function Dashboard() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Categoria</label>
-                    <select name="category" className="w-full p-3 rounded-xl border border-zinc-200">
+                    <select 
+                      name="category" 
+                      defaultValue={editingTransaction?.category}
+                      className="w-full p-3 rounded-xl border border-zinc-200"
+                    >
                       {CATEGORIES[formType].map(c => (
                         <option key={c.id} value={c.id}>{c.label}</option>
                       ))}
@@ -1984,7 +2213,11 @@ export default function Dashboard() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Pagamento</label>
-                    <select name="payment_method" className="w-full p-3 rounded-xl border border-zinc-200">
+                    <select 
+                      name="payment_method" 
+                      defaultValue={editingTransaction?.payment_method}
+                      className="w-full p-3 rounded-xl border border-zinc-200"
+                    >
                       {PAYMENT_METHODS.map(pm => (
                         <option key={pm.id} value={pm.id}>{pm.label}</option>
                       ))}
@@ -1993,18 +2226,52 @@ export default function Dashboard() {
                 </div>
 
                 <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Data</label>
+                  <input 
+                    required 
+                    name="date" 
+                    type="date" 
+                    defaultValue={editingTransaction ? format(parseISO(editingTransaction.date), 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd')}
+                    className="w-full p-3 rounded-xl border border-zinc-200" 
+                  />
+                </div>
+
+                <div className="space-y-1">
                   <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Observações</label>
-                  <textarea name="notes" className="w-full p-3 rounded-xl border border-zinc-200 h-20" placeholder="Opcional..." />
+                  <textarea 
+                    name="notes" 
+                    defaultValue={editingTransaction?.notes}
+                    className="w-full p-3 rounded-xl border border-zinc-200 h-20" 
+                    placeholder="Opcional..." 
+                  />
                 </div>
 
                 <div className="flex items-center gap-2 py-2">
-                  <input type="checkbox" name="is_recurring" id="is_recurring" className="w-4 h-4 rounded border-zinc-300 text-sublime focus:ring-sublime" />
+                  <input 
+                    type="checkbox" 
+                    name="is_recurring" 
+                    id="is_recurring" 
+                    defaultChecked={editingTransaction?.is_recurring}
+                    className="w-4 h-4 rounded border-zinc-300 text-sublime focus:ring-sublime" 
+                  />
                   <label htmlFor="is_recurring" className="text-sm text-zinc-600 font-medium">Transação Recorrente</label>
                 </div>
 
                 <div className="flex gap-3 pt-4">
-                  <button type="button" onClick={() => setIsAddingTransaction(false)} className="flex-1 p-3 rounded-xl border font-bold text-zinc-500 hover:bg-zinc-50 transition-all">Cancelar</button>
-                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20">Salvar</button>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setIsAddingTransaction(false);
+                      setEditingTransaction(null);
+                      setAuthError(null);
+                    }} 
+                    className="flex-1 p-3 rounded-xl border font-bold text-zinc-500 hover:bg-zinc-50 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20">
+                    {editingTransaction ? 'Atualizar' : 'Salvar'}
+                  </button>
                 </div>
               </form>
             </motion.div>
@@ -2186,6 +2453,108 @@ export default function Dashboard() {
               </form>
             </motion.div>
           </div>
+        )}
+
+        {transactionToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl text-center">
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={32} />
+              </div>
+              <h2 className="text-xl font-bold mb-2">Excluir Transação?</h2>
+              <p className="text-zinc-500 text-sm mb-6">Esta ação não pode ser desfeita. Deseja realmente excluir este registro?</p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setTransactionToDelete(null)}
+                  className="flex-1 p-3 rounded-xl border font-bold text-zinc-500 hover:bg-zinc-50 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => deleteTransaction(transactionToDelete)}
+                  className="flex-1 p-3 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
+                >
+                  Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {isShowingBankGuide && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-sublime/10 rounded-xl text-sublime">
+                    <BookOpen size={24} />
+                  </div>
+                  <h2 className="text-xl font-bold">Guia de Conexão Bancária</h2>
+                </div>
+                <button onClick={() => setIsShowingBankGuide(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-all">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                  <h4 className="font-bold text-sm mb-2 flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-500" />
+                    Passo 1: Escolha sua Instituição
+                  </h4>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Clique no botão "Conectar Conta" e selecione o seu banco na lista de instituições suportadas pelo Open Finance.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                  <h4 className="font-bold text-sm mb-2 flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-500" />
+                    Passo 2: Autorização Segura
+                  </h4>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Você será redirecionado para o ambiente seguro do seu banco. Lá, você deve autorizar o compartilhamento de dados (extratos e saldos) com o {onboardingData?.companyName || 'Studio Sublime'}.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                  <h4 className="font-bold text-sm mb-2 flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-500" />
+                    Passo 3: Sincronização Automática
+                  </h4>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Após a autorização, seus dados serão sincronizados automaticamente. Você poderá ver seus saldos e transações diretamente no Dashboard, facilitando sua gestão financeira.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex gap-3">
+                  <Info size={18} className="text-blue-600 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-bold text-blue-800">Dica de Conexão</p>
+                    <p className="text-[10px] text-blue-700 leading-relaxed">
+                      Se a conexão automática falhar, você também pode importar seus extratos manualmente usando a opção "Importar Extrato (PDF/CSV)" na tela principal de transações.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => setIsShowingBankGuide(false)}
+                className="w-full mt-8 p-4 bg-sublime text-white rounded-xl font-bold shadow-lg shadow-sublime/20 hover:bg-sublime/90 transition-all"
+              >
+                Entendi, vamos lá!
+              </button>
+            </motion.div>
+          </div>
+        )}
+
+        {isImportingStatement && (
+          <StatementImporter 
+            onClose={() => setIsImportingStatement(false)} 
+            onSuccess={() => {
+              // The onSnapshot listener will handle the update
+            }}
+          />
         )}
       </AnimatePresence>
     </div>

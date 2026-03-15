@@ -3,7 +3,7 @@ import { Transaction } from "../types";
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-export async function getAIInsights(transactions: Transaction[], goal: number, current: number) {
+export async function getAIInsights(transactions: Transaction[], goal: number, current: number, companyName: string = 'Studio Sublime') {
   const response = await genAI.models.generateContent({
     model: "gemini-3-flash-preview",
     config: {
@@ -11,7 +11,7 @@ export async function getAIInsights(transactions: Transaction[], goal: number, c
     },
     contents: [{ parts: [{ text: `
     Você é um consultor financeiro especializado em pequenos negócios (MEI) no Brasil.
-    Dados do Studio Sublime este mês:
+    Dados do ${companyName} este mês:
     - Faturamento Real: R$ ${current}
     - Meta de Faturamento: R$ ${goal}
     - Despesas Totais: R$ ${transactions.reduce((acc, t) => t.type === 'saida' ? acc + t.amount : acc, 0)}
@@ -33,7 +33,7 @@ export async function getAIInsights(transactions: Transaction[], goal: number, c
     console.error("AI Insight error:", error);
     return [
       "Mantenha o foco na sua meta de R$ " + goal,
-      "Lembre-se de separar as contas pessoais das do Studio.",
+      "Lembre-se de separar as contas pessoais das do " + companyName + ".",
       "O DAS-MEI vence todo dia 20, não esqueça!"
     ];
   }

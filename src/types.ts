@@ -85,14 +85,16 @@ export interface WeddingGoal {
 
 export interface OnboardingData {
   name: string;
+  companyName?: string;
+  photoURL?: string;
   primaryColor: string;
   revenueGoal: number;
   proLabore: number;
   expenseAlertThreshold: number;
   mainService: string;
   hasPartners: boolean;
-  weddingGoalAmount: number;
-  weddingDate: string;
+  weddingGoalAmount?: number;
+  weddingDate?: string;
   dataEntryMethod: 'manual' | 'upload';
   onboardingCompleted: boolean;
 }

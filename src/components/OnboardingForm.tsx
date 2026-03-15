@@ -14,14 +14,13 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState<Partial<OnboardingData>>({
     name: '',
+    companyName: '',
     primaryColor: '#8b5cf6',
     revenueGoal: 8000,
     proLabore: 2500,
     expenseAlertThreshold: 70,
     mainService: 'Cabelo',
     hasPartners: false,
-    weddingGoalAmount: 30000,
-    weddingDate: '2027-02-10',
     dataEntryMethod: 'manual',
     onboardingCompleted: false
   });
@@ -63,12 +62,12 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
           <div className="w-16 h-16 bg-sublime rounded-2xl flex items-center justify-center mx-auto shadow-xl mb-4">
             <Sparkles className="text-white" size={32} />
           </div>
-          <h1 className="text-3xl font-bold font-display">Bem-vinda ao seu Studio Sublime</h1>
+          <h1 className="text-3xl font-bold font-display">Bem-vinda ao seu Studio</h1>
           <p className="text-zinc-500">Vamos configurar sua inteligência financeira em poucos passos.</p>
         </div>
 
         <div className="flex justify-between mb-8">
-          {[1, 2, 3, 4, 5].map((s) => (
+          {[1, 2, 3, 4].map((s) => (
             <div 
               key={s} 
               className={`h-2 flex-1 mx-1 rounded-full transition-all ${s <= step ? 'bg-sublime' : 'bg-zinc-200'}`}
@@ -87,11 +86,22 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
                 <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do seu negócio</label>
                 <input 
                   required 
+                  name="companyName" 
+                  value={formData.companyName} 
+                  onChange={handleChange}
+                  className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
+                  placeholder="Ex: Studio Sublime" 
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Seu Nome</label>
+                <input 
+                  required 
                   name="name" 
                   value={formData.name} 
                   onChange={handleChange}
                   className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
-                  placeholder="Ex: Studio Sublime" 
+                  placeholder="Ex: Maria Silva" 
                 />
               </div>
               <div className="space-y-1">
@@ -200,39 +210,8 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
           {step === 4 && (
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               <div className="flex items-center gap-2 text-sublime mb-4">
-                <Heart size={20} />
-                <h2 className="text-xl font-bold">4. O Sonho: Casamento 2027</h2>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Valor alvo para o casamento (R$)</label>
-                <input 
-                  required 
-                  type="number" 
-                  name="weddingGoalAmount" 
-                  value={formData.weddingGoalAmount} 
-                  onChange={handleChange}
-                  className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Data Alvo</label>
-                <input 
-                  required 
-                  type="date" 
-                  name="weddingDate" 
-                  value={formData.weddingDate} 
-                  onChange={handleChange}
-                  className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
-                />
-              </div>
-            </motion.div>
-          )}
-
-          {step === 5 && (
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-              <div className="flex items-center gap-2 text-sublime mb-4">
                 <Sparkles size={20} />
-                <h2 className="text-xl font-bold">5. Fiscalização por IA</h2>
+                <h2 className="text-xl font-bold">4. Fiscalização por IA</h2>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Como prefere alimentar os dados?</label>
@@ -266,7 +245,7 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
                 Voltar
               </button>
             )}
-            {step < 5 ? (
+            {step < 4 ? (
               <button 
                 type="button" 
                 onClick={nextStep}

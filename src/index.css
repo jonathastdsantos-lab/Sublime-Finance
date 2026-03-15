@@ -3,8 +3,8 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
-  --color-sublime: #8b5cf6;
-  --color-sublime-dark: #7c3aed;
+  --color-sublime: var(--primary-color, #8b5cf6);
+  --color-sublime-dark: var(--primary-color-dark, #7c3aed);
 }
 
 @layer base {

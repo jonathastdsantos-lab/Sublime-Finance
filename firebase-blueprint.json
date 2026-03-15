@@ -105,6 +105,8 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" },
+        "companyName": { "type": "string" },
+        "photoURL": { "type": "string" },
         "primaryColor": { "type": "string" },
         "revenueGoal": { "type": "number" },
         "proLabore": { "type": "number" },
@@ -114,9 +116,10 @@
         "weddingGoalAmount": { "type": "number" },
         "weddingDate": { "type": "string" },
         "dataEntryMethod": { "type": "string" },
-        "onboardingCompleted": { "type": "boolean" }
+        "onboardingCompleted": { "type": "boolean" },
+        "userId": { "type": "string" }
       },
-      "required": ["name", "primaryColor", "revenueGoal", "proLabore", "expenseAlertThreshold", "mainService", "hasPartners", "weddingGoalAmount", "weddingDate", "dataEntryMethod", "onboardingCompleted"]
+      "required": ["name", "primaryColor", "revenueGoal", "proLabore", "expenseAlertThreshold", "mainService", "hasPartners", "dataEntryMethod", "onboardingCompleted"]
     },
     "FixedCost": {
       "title": "FixedCost",

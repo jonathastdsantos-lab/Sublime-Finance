@@ -19,7 +19,7 @@ service cloud.firestore {
     //
     // Collection: onboarding
     // Document ID: userId
-    // Fields: name (string), primaryColor (string), revenueGoal (number), proLabore (number), expenseAlertThreshold (number), mainService (string), hasPartners (bool), weddingGoalAmount (number), weddingDate (string), dataEntryMethod (string), onboardingCompleted (bool)
+    // Fields: name (string), companyName (string), photoURL (string), primaryColor (string), revenueGoal (number), proLabore (number), expenseAlertThreshold (number), mainService (string), hasPartners (bool), weddingGoalAmount (number, optional), weddingDate (string, optional), dataEntryMethod (string), onboardingCompleted (bool), userId (string)
     //
     // Collection: fixedCosts
     // Fields: name (string), category (string), amount (number), due_day (number), is_active (bool), notes (string), userId (string)
@@ -81,16 +81,19 @@ service cloud.firestore {
 
     function isValidOnboarding(data) {
       return data.name is string && data.name.size() > 0 && data.name.size() < 50 &&
+             (!('companyName' in data) || data.companyName is string) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
              data.primaryColor is string &&
              data.revenueGoal is number &&
              data.proLabore is number &&
              data.expenseAlertThreshold is number &&
              data.mainService is string &&
              data.hasPartners is bool &&
-             data.weddingGoalAmount is number &&
-             data.weddingDate is string &&
+             (!('weddingGoalAmount' in data) || data.weddingGoalAmount is number) &&
+             (!('weddingDate' in data) || data.weddingDate is string) &&
              data.dataEntryMethod is string &&
-             data.onboardingCompleted is bool;
+             data.onboardingCompleted is bool &&
+             (!('userId' in data) || data.userId == request.auth.uid);
     }
 
     function isValidServiceCost(data) {
