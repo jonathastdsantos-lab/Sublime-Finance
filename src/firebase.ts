@@ -74,3 +74,18 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+export const logAudit = async (action: string, details: any) => {
+  try {
+    const { addDoc, collection } = await import('firebase/firestore');
+    await addDoc(collection(db, 'audit_logs'), {
+      action,
+      details,
+      userId: auth.currentUser?.uid,
+      userEmail: auth.currentUser?.email,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error logging audit:', error);
+  }
+};

@@ -182,17 +182,56 @@
         "displayName": { "type": "string" },
         "role": { "type": "string", "enum": ["admin", "user"], "default": "user" },
         "status": { "type": "string", "enum": ["active", "blocked"], "default": "active" },
-        "blockedFeatures": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "isBlocked": { "type": "boolean", "default": false },
+        "blockMessage": { "type": "string" },
+        "blockReason": { "type": "string", "enum": ["payment_pending", "terms_violation", "account_maintenance", "other"] },
+        "blockedFeatures": { "type": "array", "items": { "type": "object" }, "default": [] },
         "createdAt": { "type": "string", "format": "date-time" },
-        "lastLogin": { "type": "string", "format": "date-time" }
+        "lastLogin": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
       },
       "required": ["email", "role", "status"]
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application configuration",
+      "type": "object",
+      "properties": {
+        "maintenanceMode": { "type": "boolean", "default": false },
+        "globalMessage": { "type": "string" },
+        "topBanner": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" },
+            "type": { "type": "string", "enum": ["info", "warning", "error"] },
+            "active": { "type": "boolean" }
+          }
+        },
+        "featureFlags": { "type": "object" }
+      }
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System audit log for admin actions",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "details": { "type": "object" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "timestamp"]
     }
   },
   "firestore": {
     "users": {
       "schema": "User",
       "description": "Collection of user profiles and permissions"
+    },
+    "app_config": {
+      "schema": "AppConfig",
+      "description": "Global application configuration"
     },
     "transactions": {
       "schema": "Transaction",
@@ -229,6 +268,10 @@
     "bank_transactions": {
       "schema": "BankTransaction",
       "description": "Collection of bank transactions"
+    },
+    "audit_logs": {
+      "schema": "AuditLog",
+      "description": "Collection of system audit logs"
     }
   }
 }

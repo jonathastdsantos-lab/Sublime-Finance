@@ -41,6 +41,7 @@ import {
   Unlock,
   UserCheck,
   UserX,
+  Eye,
   BarChart as BarChartIcon
 } from 'lucide-react';
 import { 
@@ -74,13 +75,14 @@ import {
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, resetPassword, handleFirestoreError, OperationType } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount } from '../types';
+import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
 import { getAIInsights } from '../services/aiService';
 import OnboardingForm from './OnboardingForm';
 import ErrorBoundary from './ErrorBoundary';
 import AdminPanel from './AdminPanel';
 import OnboardingGuide from './OnboardingGuide';
+import BlockedScreen from './BlockedScreen';
 
 type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
@@ -104,7 +106,8 @@ function DashboardContent() {
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [onboardingData, setOnboardingData] = useState<OnboardingData | null>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [isLoadingOnboarding, setIsLoadingOnboarding] = useState(true);
 
   const [activeView, setActiveView] = useState<View>('dashboard');
@@ -238,6 +241,21 @@ function DashboardContent() {
     testConnection();
 
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      // Check for impersonation
+      const impersonatedId = localStorage.getItem('impersonated_user_id');
+      
+      if (impersonatedId && u) {
+        // We are in impersonation mode. 
+        // In a real app, we'd verify the admin status of 'u' before allowing this.
+        // For this prototype, we'll fetch the impersonated user's profile.
+        const impersonatedDoc = await getDoc(doc(db, 'users', impersonatedId));
+        if (impersonatedDoc.exists()) {
+          const data = impersonatedDoc.data() as UserProfile;
+          setUserProfile({ id: impersonatedId, ...data });
+          // We don't change 'user' (auth.currentUser) but we'll use impersonatedId for queries
+        }
+      }
+
       setUser(u);
       if (u) {
         // Ensure users document exists
@@ -322,7 +340,7 @@ function DashboardContent() {
     }
     const unsub = onSnapshot(doc(db, 'users', user.uid), (doc) => {
       if (doc.exists()) {
-        setUserProfile(doc.data());
+        setUserProfile({ id: doc.id, ...doc.data() } as UserProfile);
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
@@ -389,6 +407,12 @@ function DashboardContent() {
       handleFirestoreError(error, OperationType.LIST, 'bank_accounts');
     });
 
+    const unsubConfig = onSnapshot(doc(db, 'app_config', 'global'), (doc) => {
+      if (doc.exists()) {
+        setAppConfig({ id: 'global', ...doc.data() } as AppConfig);
+      }
+    });
+
     return () => {
       unsubTrans();
       unsubService();
@@ -397,6 +421,7 @@ function DashboardContent() {
       unsubMei();
       unsubGoals();
       unsubBank();
+      unsubConfig();
     };
   }, [user]);
 
@@ -835,14 +860,39 @@ function DashboardContent() {
     }
   };
 
+  const isFeatureBlocked = (view: string, subArea?: string) => {
+    if (!userProfile?.blockedFeatures) return false;
+    
+    const block = userProfile.blockedFeatures.find((f: any) => 
+      typeof f === 'string' ? f === view : f.id === view
+    );
+    
+    if (!block) return false;
+    
+    const blockObj = typeof block === 'string' ? { id: block } : (block as BlockedFeature);
+    
+    // Check expiration
+    if (blockObj.expiresAt && new Date(blockObj.expiresAt) < new Date()) {
+      return false;
+    }
+    
+    // If subArea is provided, check if it's blocked
+    if (subArea && blockObj.subAreas && blockObj.subAreas.length > 0) {
+      return blockObj.subAreas.includes(subArea);
+    }
+    
+    // If no subArea provided or subAreas list is empty, the whole feature is blocked
+    return !subArea || !blockObj.subAreas || blockObj.subAreas.length === 0;
+  };
+
   useEffect(() => {
-    if (userProfile?.blockedFeatures?.includes(activeView)) {
+    if (isFeatureBlocked(activeView)) {
       setActiveView('dashboard');
     }
   }, [userProfile?.blockedFeatures, activeView]);
 
   const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => {
-    const isBlocked = userProfile?.blockedFeatures?.includes(view);
+    const isBlocked = isFeatureBlocked(view);
     
     return (
       <button 
@@ -1012,25 +1062,28 @@ function DashboardContent() {
     return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} onCancel={handleLogOut} />;
   }
 
-  if (userProfile?.status === 'blocked') {
+  const isImpersonating = !!localStorage.getItem('impersonated_user_id');
+
+  if (userProfile?.status === 'blocked' || userProfile?.isBlocked) {
+    return <BlockedScreen message={userProfile.blockMessage} reason={userProfile.blockReason} />;
+  }
+
+  if (appConfig?.maintenanceMode && userProfile?.role !== 'admin') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
-        <div className="glass-card p-8 md:p-12 text-center space-y-6 max-w-md w-full">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl">
-            <Lock size={32} />
+        <div className="glass-card p-12 text-center space-y-6 max-w-md w-full">
+          <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
+            <RefreshCw size={40} className="animate-spin-slow" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-2xl font-bold font-display text-red-600">Acesso Bloqueado</h1>
-            <p className="text-zinc-500 text-sm">
-              Sua conta foi suspensa por um administrador. Entre em contato com o suporte para mais informações.
+            <h1 className="text-2xl font-bold font-display">Manutenção</h1>
+            <p className="text-zinc-500 text-sm leading-relaxed">
+              Estamos realizando melhorias no sistema para melhor atendê-la. Voltamos em instantes!
             </p>
           </div>
-          <button 
-            onClick={handleLogOut}
-            className="w-full bg-zinc-900 text-white px-6 py-3.5 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg"
-          >
-            Sair da Conta
-          </button>
+          <div className="pt-4">
+            <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">Sublime Finance</p>
+          </div>
         </div>
       </div>
     );
@@ -1325,11 +1378,18 @@ function DashboardContent() {
         </div>
 
         <button 
-          onClick={handleLogOut}
+          onClick={() => {
+            if (isImpersonating) {
+              localStorage.removeItem('impersonated_user_id');
+              window.location.reload();
+            } else {
+              handleLogOut();
+            }
+          }}
           className="flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-400 hover:text-red-500 hover:bg-red-50 transition-all"
         >
           <LogOut size={20} />
-          <span className="font-medium">Sair</span>
+          <span className="font-medium">{isImpersonating ? 'Parar Impersonação' : 'Sair'}</span>
         </button>
       </aside>
 
@@ -1397,6 +1457,39 @@ function DashboardContent() {
 
       {/* Main Content */}
       <main className="flex-1 p-4 md:p-8 space-y-8 overflow-y-auto max-w-5xl mx-auto w-full">
+        {appConfig?.topBanner?.active && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            className={`p-3 rounded-xl flex items-center justify-center gap-3 text-xs font-bold ${
+              appConfig.topBanner.type === 'error' ? 'bg-red-500 text-white' :
+              appConfig.topBanner.type === 'warning' ? 'bg-orange-500 text-white' :
+              'bg-sublime text-white'
+            }`}
+          >
+            <Info size={16} />
+            {appConfig.topBanner.text}
+          </motion.div>
+        )}
+
+        {isImpersonating && (
+          <div className="bg-orange-50 border border-orange-100 p-3 rounded-xl flex items-center justify-between text-orange-700">
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <Eye size={16} />
+              Você está visualizando como: {userProfile?.name}
+            </div>
+            <button 
+              onClick={() => {
+                localStorage.removeItem('impersonated_user_id');
+                window.location.reload();
+              }}
+              className="text-[10px] font-bold uppercase hover:underline"
+            >
+              Sair
+            </button>
+          </div>
+        )}
+
         {/* Top Profile Bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1694,11 +1787,12 @@ function DashboardContent() {
                       </div>
                       <button 
                         onClick={() => {
+                          if (isFeatureBlocked('transactions', 'edit')) return;
                           setEditingTransaction(t);
                           setFormType(t.type as 'entrada' | 'saida');
                         }}
-                        className="p-2 text-zinc-400 hover:text-sublime transition-colors"
-                        title="Editar"
+                        className={`p-2 transition-colors ${isFeatureBlocked('transactions', 'edit') ? 'opacity-30 cursor-not-allowed' : 'text-zinc-400 hover:text-sublime'}`}
+                        title={isFeatureBlocked('transactions', 'edit') ? "Acesso bloqueado" : "Editar"}
                       >
                         <Settings size={16} />
                       </button>
@@ -1727,13 +1821,15 @@ function DashboardContent() {
                   <Bell size={18} />
                   <span>Lembretes</span>
                 </button>
-                <button 
-                  onClick={() => setIsAddingFixedCost(true)}
-                  className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
-                >
-                  <Plus size={20} />
-                  <span>Adicionar</span>
-                </button>
+                {!isFeatureBlocked('fixed_costs', 'add') && (
+                  <button 
+                    onClick={() => setIsAddingFixedCost(true)}
+                    className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
+                  >
+                    <Plus size={20} />
+                    <span>Adicionar</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1811,8 +1907,12 @@ function DashboardContent() {
                           <td className="p-4">
                             <div className="flex items-center justify-center gap-2">
                               <button 
-                                onClick={() => deleteFixedCost(cost.id)}
-                                className="p-2 text-zinc-400 hover:text-red-500 transition-all"
+                                onClick={() => {
+                                  if (isFeatureBlocked('fixed_costs', 'edit')) return;
+                                  deleteFixedCost(cost.id);
+                                }}
+                                className={`p-2 transition-all ${isFeatureBlocked('fixed_costs', 'edit') ? 'opacity-30 cursor-not-allowed' : 'text-zinc-400 hover:text-red-500'}`}
+                                title={isFeatureBlocked('fixed_costs', 'edit') ? "Acesso bloqueado" : "Excluir"}
                               >
                                 <X size={18} />
                               </button>
@@ -1844,13 +1944,15 @@ function DashboardContent() {
                   <Bell size={18} />
                   <span>Lembretes</span>
                 </button>
-                <button 
-                  onClick={() => setIsAddingMei(true)}
-                  className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
-                >
-                  <Plus size={20} />
-                  <span>Nova Guia</span>
-                </button>
+                {!isFeatureBlocked('mei', 'das') && (
+                  <button 
+                    onClick={() => setIsAddingMei(true)}
+                    className="bg-sublime text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-sublime/20"
+                  >
+                    <Plus size={20} />
+                    <span>Nova Guia</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1890,12 +1992,14 @@ function DashboardContent() {
                       </div>
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-sm">R$ {m.amount.toLocaleString()}</p>
-                        <button 
-                          onClick={() => updateMeiStatus(m.id, 'pago')}
-                          className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
-                        >
-                          <CheckCircle2 size={18} />
-                        </button>
+                        {!isFeatureBlocked('mei', 'obligations') && (
+                          <button 
+                            onClick={() => updateMeiStatus(m.id, 'pago')}
+                            className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                          >
+                            <CheckCircle2 size={18} />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1992,9 +2096,11 @@ function DashboardContent() {
                 return (
                   <div key={g.id} className="glass-card p-6 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => deleteGoal(g.id)} className="text-zinc-300 hover:text-red-500">
-                        <X size={16} />
-                      </button>
+                      {!isFeatureBlocked('goals', 'edit') && (
+                        <button onClick={() => deleteGoal(g.id)} className="text-zinc-300 hover:text-red-500">
+                          <X size={16} />
+                        </button>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 mb-4">
                       <div className="p-3 bg-sublime/10 text-sublime rounded-2xl">
@@ -2039,8 +2145,9 @@ function DashboardContent() {
                         <div className="flex gap-2">
                           <input 
                             type="number" 
-                            className="flex-1 p-2 text-xs rounded-lg border border-zinc-100 bg-zinc-50"
-                            placeholder="Novo valor..."
+                            disabled={isFeatureBlocked('goals', 'edit')}
+                            className={`flex-1 p-2 text-xs rounded-lg border border-zinc-100 bg-zinc-50 ${isFeatureBlocked('goals', 'edit') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            placeholder={isFeatureBlocked('goals', 'edit') ? "Bloqueado" : "Novo valor..."}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
                                 updateGoalAmount(g.id, Number((e.target as HTMLInputElement).value));
@@ -2072,20 +2179,24 @@ function DashboardContent() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <h2 className="text-2xl font-bold">Transações</h2>
               <div className="flex flex-wrap gap-2">
-                <button 
-                  onClick={exportToCSV}
-                  className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all"
-                >
-                  <Download size={18} />
-                  Exportar CSV
-                </button>
-                <button 
-                  onClick={() => setIsAddingTransaction(true)}
-                  className="flex items-center gap-2 px-4 py-2 bg-sublime text-white rounded-xl font-bold text-sm hover:bg-sublime/90 transition-all"
-                >
-                  <Plus size={18} />
-                  Nova Transação
-                </button>
+                {!isFeatureBlocked('transactions', 'export') && (
+                  <button 
+                    onClick={exportToCSV}
+                    className="flex items-center gap-2 px-4 py-2 bg-zinc-900 text-white rounded-xl font-bold text-sm hover:bg-zinc-800 transition-all"
+                  >
+                    <Download size={18} />
+                    Exportar CSV
+                  </button>
+                )}
+                {!isFeatureBlocked('transactions', 'add') && (
+                  <button 
+                    onClick={() => setIsAddingTransaction(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-sublime text-white rounded-xl font-bold text-sm hover:bg-sublime/90 transition-all"
+                  >
+                    <Plus size={18} />
+                    Nova Transação
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2220,18 +2331,22 @@ function DashboardContent() {
                           <div className="flex items-center gap-2">
                             <button 
                               onClick={() => {
+                                if (isFeatureBlocked('transactions', 'edit')) return;
                                 setEditingTransaction(t);
                                 setFormType(t.type as 'entrada' | 'saida');
                               }}
-                              className="p-2 text-zinc-400 hover:text-sublime transition-colors"
-                              title="Editar"
+                              className={`p-2 transition-colors ${isFeatureBlocked('transactions', 'edit') ? 'opacity-30 cursor-not-allowed' : 'text-zinc-400 hover:text-sublime'}`}
+                              title={isFeatureBlocked('transactions', 'edit') ? "Acesso bloqueado" : "Editar"}
                             >
                               <Settings size={16} />
                             </button>
                             <button 
-                              onClick={() => setTransactionToDelete(t.id)}
-                              className="p-2 text-zinc-400 hover:text-red-600 transition-colors"
-                              title="Excluir"
+                              onClick={() => {
+                                if (isFeatureBlocked('transactions', 'edit')) return;
+                                setTransactionToDelete(t.id);
+                              }}
+                              className={`p-2 transition-colors ${isFeatureBlocked('transactions', 'edit') ? 'opacity-30 cursor-not-allowed' : 'text-zinc-400 hover:text-red-600'}`}
+                              title={isFeatureBlocked('transactions', 'edit') ? "Acesso bloqueado" : "Excluir"}
                             >
                               <Trash2 size={16} />
                             </button>
@@ -2249,6 +2364,50 @@ function DashboardContent() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeView === 'investments' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold">Investimentos</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {!isFeatureBlocked('investments', 'calculator') && (
+                <div className="glass-card p-6">
+                  <Calculator size={24} className="text-sublime mb-4" />
+                  <h3 className="font-bold mb-2">Calculadora de Rentabilidade</h3>
+                  <p className="text-sm text-zinc-500">Simule o crescimento do seu capital.</p>
+                </div>
+              )}
+              {!isFeatureBlocked('investments', 'options') && (
+                <div className="glass-card p-6">
+                  <TrendingUp size={24} className="text-emerald-500 mb-4" />
+                  <h3 className="font-bold mb-2">Opções de Investimento</h3>
+                  <p className="text-sm text-zinc-500">Conheça as melhores opções para o seu perfil.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeView === 'ai' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold">IA Financeira</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {!isFeatureBlocked('ai', 'chat') && (
+                <div className="glass-card p-6">
+                  <Sparkles size={24} className="text-sublime mb-4" />
+                  <h3 className="font-bold mb-2">Chat com IA</h3>
+                  <p className="text-sm text-zinc-500">Tire suas dúvidas financeiras em tempo real.</p>
+                </div>
+              )}
+              {!isFeatureBlocked('ai', 'reports') && (
+                <div className="glass-card p-6">
+                  <FileText size={24} className="text-zinc-900 mb-4" />
+                  <h3 className="font-bold mb-2">Relatórios Inteligentes</h3>
+                  <p className="text-sm text-zinc-500">Análises detalhadas geradas automaticamente.</p>
+                </div>
+              )}
             </div>
           </div>
         )}

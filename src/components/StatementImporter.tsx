@@ -4,7 +4,7 @@ import { Upload, FileText, Check, X, Loader2, AlertCircle, FileCode } from 'luci
 import { motion, AnimatePresence } from 'motion/react';
 import Papa from 'papaparse';
 import { GoogleGenAI, Type } from "@google/genai";
-import { db, auth } from '../firebase';
+import { db, auth, logAudit } from '../firebase';
 import { collection, addDoc } from 'firebase/firestore';
 
 interface TransactionPreview {
@@ -100,9 +100,15 @@ export default function StatementImporter({ onClose, onSuccess }: StatementImpor
 
       const result = JSON.parse(response.text || '[]');
       setPreviewTransactions(result);
+      await logAudit('ai_processing_success', { fileName: file.name, transactionCount: result.length });
     } catch (err: any) {
       console.error("AI Processing Error:", err);
-      setError("Não foi possível processar o arquivo. Verifique se o formato é suportado.");
+      await logAudit('ai_processing_error', { 
+        fileName: file.name, 
+        fileSize: file.size,
+        errorMessage: err.message
+      });
+      setError(`Não foi possível processar o arquivo. Verifique se o formato é suportado ou se o arquivo contém dados válidos. (${err.message || 'Erro na IA'})`);
     } finally {
       setIsProcessing(false);
     }

@@ -23,6 +23,39 @@ export type PaymentMethod =
   | 'transferencia' 
   | 'boleto';
 
+export interface BlockedFeature {
+  id: string;
+  expiresAt?: string;
+  subAreas?: string[];
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'blocked';
+  createdAt: string;
+  lastLogin: string;
+  blockedFeatures?: (string | BlockedFeature)[];
+  isBlocked?: boolean;
+  blockMessage?: string;
+  blockReason?: 'payment_pending' | 'terms_violation' | 'account_maintenance' | 'other';
+  metadata?: Record<string, any>;
+}
+
+export interface AppConfig {
+  id: 'global';
+  maintenanceMode: boolean;
+  globalMessage?: string;
+  topBanner?: {
+    text: string;
+    type: 'info' | 'warning' | 'error';
+    active: boolean;
+  };
+  featureFlags?: Record<string, boolean>;
+}
+
 export interface Transaction {
   id: string;
   description: string;

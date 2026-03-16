@@ -38,7 +38,10 @@ service cloud.firestore {
     //
     // Collection: users
     // Document ID: userId
-    // Fields: email (string), displayName (string), photoURL (string), role (string), status (string), blockedFeatures (list), lastLogin (string), createdAt (string)
+    // Fields: email (string), displayName (string), photoURL (string), role (string), status (string), blockedFeatures (list), lastLogin (string), createdAt (string), isBlocked (bool), blockMessage (string), blockReason (string), metadata (map)
+    //
+    // Collection: audit_logs
+    // Fields: action (string), details (map), userId (string), userEmail (string), timestamp (string)
     //
     // ===============================================================
 
@@ -174,10 +177,21 @@ service cloud.firestore {
              data.userId == request.auth.uid;
     }
 
+    function isValidBlockedFeature(f) {
+      return f is string || (
+        f is map &&
+        f.keys().hasOnly(['id', 'expiresAt', 'subAreas']) &&
+        f.id is string &&
+        (!('expiresAt' in f) || f.expiresAt is string) &&
+        (!('subAreas' in f) || f.subAreas is list)
+      );
+    }
+
     function isValidUser(data) {
       let validRoles = ['admin', 'user'];
       let validStatuses = ['active', 'blocked'];
-      let allowedFields = ['name', 'email', 'role', 'status', 'createdAt', 'lastLogin', 'blockedFeatures', 'displayName', 'photoURL'];
+      let validReasons = ['payment_pending', 'terms_violation', 'account_maintenance', 'other'];
+      let allowedFields = ['name', 'email', 'role', 'status', 'createdAt', 'lastLogin', 'blockedFeatures', 'displayName', 'photoURL', 'isBlocked', 'blockMessage', 'blockReason', 'metadata'];
       
       return data.keys().hasOnly(allowedFields) &&
              data.email is string &&
@@ -186,9 +200,13 @@ service cloud.firestore {
              (!('photoURL' in data) || data.photoURL is string) &&
              data.role in validRoles &&
              data.status in validStatuses &&
+             (!('isBlocked' in data) || data.isBlocked is bool) &&
+             (!('blockMessage' in data) || data.blockMessage is string) &&
+             (!('blockReason' in data) || data.blockReason in validReasons) &&
              (!('blockedFeatures' in data) || data.blockedFeatures is list) &&
              (!('lastLogin' in data) || data.lastLogin is string) &&
-             (!('createdAt' in data) || data.createdAt is string);
+             (!('createdAt' in data) || data.createdAt is string) &&
+             (!('metadata' in data) || data.metadata is map);
     }
 
     match /transactions/{id} {
@@ -263,10 +281,20 @@ service cloud.firestore {
                     (isAdmin() && isValidUser(request.resource.data));
                     
       allow update: if isMasterAdmin() || 
-                    (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role) ||
+                    (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role && !('isBlocked' in request.resource.data) && !('role' in request.resource.data)) ||
                     (isAdmin() && isValidUser(request.resource.data));
       
       allow delete: if isAdmin();
+    }
+
+    match /app_config/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /audit_logs/{id} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
     }
   }
 }
