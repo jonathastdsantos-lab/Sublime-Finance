@@ -68,6 +68,7 @@ import {
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, handleFirestoreError, OperationType } from '../firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
 import { getAIInsights } from '../services/aiService';
@@ -93,6 +94,7 @@ function DashboardContent() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [is2FABypassed, setIs2FABypassed] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [onboardingData, setOnboardingData] = useState<OnboardingData | null>(null);
   const [isLoadingOnboarding, setIsLoadingOnboarding] = useState(true);
@@ -699,6 +701,15 @@ function DashboardContent() {
     }
   };
 
+  const handleLogOut = () => {
+    if (isDemoMode) {
+      setIsDemoMode(false);
+      setIs2FABypassed(false);
+    } else {
+      logOut();
+    }
+  };
+
   const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => (
     <button 
       onClick={() => {
@@ -743,7 +754,13 @@ function DashboardContent() {
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
         message = 'E-mail ou senha incorretos.';
       } else if (error.code === 'auth/operation-not-allowed') {
-        message = 'O login com e-mail e senha não está ativado no seu Console do Firebase. Por favor, ative o provedor "E-mail/Senha" nas configurações de Autenticação.';
+        const projectId = firebaseConfig.projectId;
+        message = `O provedor de login (E-mail ou Google) não está ativado no projeto "${projectId}". 
+        
+        Para corrigir:
+        1. Vá em https://console.firebase.google.com/project/${projectId}/authentication/providers
+        2. Ative "E-mail/Senha" e "Google".
+        3. Verifique se este domínio está em "Domínios Autorizados".`;
       }
       
       setAuthError(message);
@@ -823,11 +840,11 @@ function DashboardContent() {
     );
   }
 
-  if (user && (!onboardingData || !onboardingData.onboardingCompleted)) {
+  if (user && (!onboardingData || !onboardingData.onboardingCompleted) && !isDemoMode) {
     return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} />;
   }
 
-  if (!user || (authMode === '2fa_start' || authMode === '2fa_check') && !is2FABypassed) {
+  if ((!user && !isDemoMode) || (authMode === '2fa_start' || authMode === '2fa_check') && !is2FABypassed) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
         <div className="glass-card p-8 md:p-12 text-center space-y-6 max-w-md w-full">
@@ -861,7 +878,20 @@ function DashboardContent() {
                 </div>
 
                 {authError && (
-                  <p className="text-xs text-red-500 font-medium bg-red-50 p-2 rounded-lg text-center">{authError}</p>
+                  <div className="space-y-3">
+                    <p className="text-xs text-red-500 font-medium bg-red-50 p-2 rounded-lg text-center whitespace-pre-line">{authError}</p>
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setIs2FABypassed(true);
+                        setIsDemoMode(true);
+                        setAuthMode('login');
+                      }}
+                      className="w-full py-2 text-[10px] font-bold text-zinc-400 hover:text-sublime transition-colors uppercase tracking-wider border border-dashed border-zinc-200 rounded-lg"
+                    >
+                      Acessar Modo de Demonstração (Bypass)
+                    </button>
+                  </div>
                 )}
 
                 <button 
@@ -920,7 +950,7 @@ function DashboardContent() {
                     placeholder="+55 11 99999-9999" 
                   />
                 </div>
-                {authError && <p className="text-xs text-red-500 text-center">{authError}</p>}
+                {authError && <p className="text-xs text-red-500 text-center whitespace-pre-line">{authError}</p>}
                 <button 
                   type="submit"
                   disabled={isLoadingAuth}
@@ -931,10 +961,14 @@ function DashboardContent() {
                 <button 
                   type="button"
                   onClick={() => setIs2FABypassed(true)}
-                  className="w-full text-xs text-zinc-400 font-bold mt-2 hover:underline"
+                  className="w-full py-3.5 rounded-xl border-2 border-dashed border-orange-200 text-orange-600 font-bold hover:bg-orange-50 transition-all flex items-center justify-center gap-2"
                 >
-                  Pular Verificação (Apenas para Testes)
+                  <Sparkles size={18} />
+                  Pular Verificação (Modo de Teste)
                 </button>
+                <p className="text-[10px] text-zinc-400 text-center italic">
+                  Dica: Se o SMS não chegar, é porque o serviço Twilio não foi configurado no ambiente. Use o botão acima para entrar.
+                </p>
               </form>
             </div>
           )}
@@ -958,7 +992,7 @@ function DashboardContent() {
                     placeholder="000000" 
                   />
                 </div>
-                {authError && <p className="text-xs text-red-500 text-center">{authError}</p>}
+                {authError && <p className="text-xs text-red-500 text-center whitespace-pre-line">{authError}</p>}
                 <button 
                   type="submit"
                   disabled={isLoadingAuth}
@@ -1042,7 +1076,7 @@ function DashboardContent() {
         </div>
 
         <button 
-          onClick={logOut}
+          onClick={handleLogOut}
           className="flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-400 hover:text-red-500 hover:bg-red-50 transition-all"
         >
           <LogOut size={20} />
@@ -1100,7 +1134,7 @@ function DashboardContent() {
                 <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
                 <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
               </nav>
-              <button onClick={logOut} className="flex items-center gap-3 p-4 text-red-500 font-bold">
+              <button onClick={handleLogOut} className="flex items-center gap-3 p-4 text-red-500 font-bold">
                 <LogOut size={20} />
                 Sair
               </button>
@@ -1114,10 +1148,20 @@ function DashboardContent() {
         {/* Top Profile Bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src={user.photoURL || ''} className="w-10 h-10 rounded-xl border-2 border-white shadow-sm" alt="User" />
+            {isDemoMode ? (
+              <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center shadow-sm">
+                <Sparkles size={20} />
+              </div>
+            ) : (
+              <img src={user?.photoURL || ''} className="w-10 h-10 rounded-xl border-2 border-white shadow-sm" alt="User" />
+            )}
             <div>
-              <p className="text-xs text-zinc-400 font-medium">Bem-vinda de volta,</p>
-              <h1 className="text-lg font-bold text-zinc-900">{user.displayName?.split(' ')[0]}</h1>
+              <p className="text-xs text-zinc-400 font-medium">
+                {isDemoMode ? 'Modo de Demonstração' : 'Bem-vinda de volta,'}
+              </p>
+              <h1 className="text-lg font-bold text-zinc-900">
+                {isDemoMode ? 'Usuária Demo' : user?.displayName?.split(' ')[0]}
+              </h1>
             </div>
           </div>
           <div className="flex items-center gap-2">
