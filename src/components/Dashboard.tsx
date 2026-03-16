@@ -72,11 +72,20 @@ import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiOb
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
 import { getAIInsights } from '../services/aiService';
 import OnboardingForm from './OnboardingForm';
+import ErrorBoundary from './ErrorBoundary';
 
 type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
+  return (
+    <ErrorBoundary>
+      <DashboardContent />
+    </ErrorBoundary>
+  );
+}
+
+function DashboardContent() {
   const [user, setUser] = useState(auth.currentUser);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -143,9 +152,24 @@ export default function Dashboard() {
     };
     testConnection();
 
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
-      if (!u) {
+      if (u) {
+        // Ensure users document exists
+        try {
+          const userDoc = await getDoc(doc(db, 'users', u.uid));
+          if (!userDoc.exists()) {
+            await setDoc(doc(db, 'users', u.uid), {
+              name: u.displayName || 'Usuário',
+              email: u.email,
+              role: 'client',
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error("Error ensuring user document:", err);
+        }
+      } else {
         setOnboardingData(null);
         setIsLoadingOnboarding(false);
         setTransactions([]);
@@ -772,6 +796,19 @@ export default function Dashboard() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    setAuthError(null);
+    setIsLoadingAuth(true);
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      console.error("Google Auth error:", error);
+      setAuthError("Erro ao entrar com Google. Tente novamente.");
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
   if (isLoadingAuth || isLoadingOnboarding) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50">
@@ -804,8 +841,8 @@ export default function Dashboard() {
               <form onSubmit={handleEmailAuth} className="space-y-4 text-left">
                 {authMode === 'register' && (
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome do Studio</label>
-                    <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder={`Ex: ${onboardingData?.companyName || 'Studio Sublime'}`} />
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Seu Nome</label>
+                    <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" placeholder="Ex: Maria Silva" />
                   </div>
                 )}
                 <div className="space-y-1">
@@ -836,8 +873,9 @@ export default function Dashboard() {
               </div>
 
               <button 
-                onClick={signInWithGoogle}
-                className="w-full flex items-center justify-center gap-3 border border-zinc-200 text-zinc-600 px-6 py-3.5 rounded-xl font-bold hover:bg-zinc-50 transition-all"
+                onClick={handleGoogleLogin}
+                disabled={isLoadingAuth}
+                className="w-full flex items-center justify-center gap-3 border border-zinc-200 text-zinc-600 px-6 py-3.5 rounded-xl font-bold hover:bg-zinc-50 transition-all disabled:opacity-50"
               >
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
                 Google
@@ -884,15 +922,13 @@ export default function Dashboard() {
                 >
                   {isLoadingAuth ? 'Enviando...' : 'Enviar Código'}
                 </button>
-                {authError && authError.includes('SMS') && (
-                  <button 
-                    type="button"
-                    onClick={() => setIs2FABypassed(true)}
-                    className="w-full text-xs text-sublime font-bold mt-2 hover:underline"
-                  >
-                    Pular Verificação (Apenas para Testes)
-                  </button>
-                )}
+                <button 
+                  type="button"
+                  onClick={() => setIs2FABypassed(true)}
+                  className="w-full text-xs text-zinc-400 font-bold mt-2 hover:underline"
+                >
+                  Pular Verificação (Apenas para Testes)
+                </button>
               </form>
             </div>
           )}
@@ -930,6 +966,13 @@ export default function Dashboard() {
                   className="w-full text-xs text-zinc-400 font-bold"
                 >
                   Reenviar código
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setIs2FABypassed(true)}
+                  className="w-full text-xs text-zinc-300 font-bold mt-4 hover:underline"
+                >
+                  Pular Verificação
                 </button>
               </form>
             </div>
