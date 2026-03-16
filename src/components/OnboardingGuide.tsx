@@ -109,7 +109,7 @@ export default function OnboardingGuide({ onClose, companyName }: OnboardingGuid
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-zinc-900">{steps[currentStep].title}</h2>
                 <p className="text-zinc-500 leading-relaxed">
-                  {steps[currentStep].description.replace('Studio Sublime', companyName)}
+                  {steps[currentStep].description.replace('Sublime Finance', companyName)}
                 </p>
               </div>
             </motion.div>

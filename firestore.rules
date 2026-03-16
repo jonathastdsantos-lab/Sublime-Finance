@@ -57,14 +57,14 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (
-          (request.auth.token.email == "jonathastdsantos@gmail.com") ||
+          (request.auth.token.email == "jonathastdsantos@gmail.com" && request.auth.token.email_verified == true) ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
         );
     }
 
     function isMasterAdmin() {
-      return isAuthenticated() && request.auth.token.email == "jonathastdsantos@gmail.com";
+      return isAuthenticated() && request.auth.token.email == "jonathastdsantos@gmail.com" && request.auth.token.email_verified == true;
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -92,20 +92,15 @@ service cloud.firestore {
 
     function isValidOnboarding(data) {
       return data.name is string && data.name.size() > 0 &&
-             (!('companyName' in data) || data.companyName is string) &&
-             (!('photoURL' in data) || data.photoURL is string) &&
              data.primaryColor is string &&
              data.revenueGoal is number &&
              data.proLabore is number &&
              data.expenseAlertThreshold is number &&
              data.mainService is string &&
              data.hasPartners is bool &&
-             (!('weddingGoalAmount' in data) || data.weddingGoalAmount is number) &&
-             (!('weddingDate' in data) || data.weddingDate is string) &&
-             (!('cnpj' in data) || data.cnpj is string) &&
-             (!('meiActivity' in data) || data.meiActivity is string) &&
              data.dataEntryMethod is string &&
-             data.onboardingCompleted is bool;
+             data.onboardingCompleted is bool &&
+             (!('userId' in data) || data.userId == request.auth.uid || isAdmin());
     }
 
     function isValidServiceCost(data) {
@@ -190,7 +185,7 @@ service cloud.firestore {
       let validRoles = ['admin', 'user'];
       let validStatuses = ['active', 'blocked'];
       let validReasons = ['payment_pending', 'terms_violation', 'account_maintenance', 'other'];
-      let allowedFields = ['name', 'email', 'role', 'status', 'createdAt', 'lastLogin', 'blockedFeatures', 'displayName', 'photoURL', 'isBlocked', 'blockMessage', 'blockReason', 'metadata'];
+      let allowedFields = ['id', 'name', 'email', 'role', 'status', 'createdAt', 'lastLogin', 'blockedFeatures', 'displayName', 'photoURL', 'isBlocked', 'blockMessage', 'blockReason', 'metadata'];
       
       return data.keys().hasOnly(allowedFields) &&
              data.email is string &&
@@ -228,9 +223,7 @@ service cloud.firestore {
     }
 
     match /onboarding/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create, update: if isOwner(userId) && isValidOnboarding(request.resource.data);
-      allow delete: if isOwner(userId) || isAdmin();
+      allow read, write: if isOwner(userId) || isAdmin();
     }
 
     match /fixedCosts/{id} {

@@ -1339,15 +1339,8 @@ function DashboardContent() {
       {/* Sidebar - Desktop */}
       <aside className="hidden md:flex flex-col w-72 bg-white border-r border-zinc-100 p-6 space-y-8 sticky top-0 h-screen overflow-y-auto">
         <div className="flex items-center gap-3 px-2">
-          {onboardingData?.photoURL ? (
-            <img src={onboardingData.photoURL} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg shadow-sublime/20" referrerPolicy="no-referrer" />
-          ) : (
-            <div className="w-10 h-10 bg-sublime rounded-xl flex items-center justify-center shadow-lg shadow-sublime/20">
-              <DollarSign className="text-white" size={20} />
-            </div>
-          )}
           <h2 className="text-xl font-bold font-display text-sublime truncate">
-            {onboardingData?.companyName || 'Sublime'}
+            {onboardingData?.companyName || 'Sublime Finance'}
           </h2>
         </div>
 
@@ -1398,15 +1391,8 @@ function DashboardContent() {
       {/* Mobile Header */}
       <header className="md:hidden bg-white border-b border-zinc-100 p-4 sticky top-0 z-40 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          {onboardingData?.photoURL ? (
-            <img src={onboardingData.photoURL} alt="Logo" className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
-          ) : (
-            <div className="w-8 h-8 bg-sublime rounded-lg flex items-center justify-center">
-              <DollarSign className="text-white" size={16} />
-            </div>
-          )}
           <h2 className="font-bold font-display text-sublime truncate max-w-[150px]">
-            {onboardingData?.companyName || 'Sublime'}
+            {onboardingData?.companyName || 'Sublime Finance'}
           </h2>
         </div>
         <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 text-zinc-500">
@@ -2419,7 +2405,7 @@ function DashboardContent() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-zinc-900 font-display">Perfil & Ajustes</h2>
-                <p className="text-sm text-zinc-500">Personalize sua experiência no {onboardingData?.companyName || 'Studio Sublime'}.</p>
+                <p className="text-sm text-zinc-500">Personalize sua experiência no {onboardingData?.companyName || 'Sublime Finance'}.</p>
               </div>
             </div>
 
@@ -2438,7 +2424,7 @@ function DashboardContent() {
                         <input 
                           required 
                           name="companyName" 
-                          defaultValue={onboardingData?.companyName || 'Studio Sublime'}
+                          defaultValue={onboardingData?.companyName || 'Sublime Finance'}
                           className="w-full p-3 rounded-xl border border-zinc-200" 
                           placeholder="Ex: Studio Sublime"
                         />
@@ -2568,7 +2554,7 @@ function DashboardContent() {
                   <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex gap-3">
                     <AlertTriangle size={18} className="text-amber-600 shrink-0" />
                     <p className="text-[10px] text-amber-700 leading-relaxed">
-                      <strong>Segurança:</strong> O {onboardingData?.companyName || 'Studio Sublime'} utiliza criptografia de ponta a ponta e protocolos de Open Finance para garantir que seus dados bancários estejam sempre protegidos. Nós nunca armazenamos suas senhas bancárias.
+                      <strong>Segurança:</strong> O {onboardingData?.companyName || 'Sublime Finance'} utiliza criptografia de ponta a ponta e protocolos de Open Finance para garantir que seus dados bancários estejam sempre protegidos. Nós nunca armazenamos suas senhas bancárias.
                     </p>
                   </div>
                 </div>
@@ -2578,7 +2564,7 @@ function DashboardContent() {
                     <Sparkles size={18} className="text-sublime" />
                     Personalização Visual
                   </h3>
-                  <p className="text-sm text-zinc-500">Escolha como o {onboardingData?.companyName || 'Studio Sublime'} deve se parecer para você.</p>
+                  <p className="text-sm text-zinc-500">Escolha como o {onboardingData?.companyName || 'Sublime Finance'} deve se parecer para você.</p>
                   
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <button 
@@ -2630,7 +2616,7 @@ function DashboardContent() {
                   </div>
                   <div>
                     <h3 className="font-bold text-lg">{onboardingData?.name}</h3>
-                    <p className="text-xs text-zinc-500">{onboardingData?.companyName || 'Studio Sublime'}</p>
+                    <p className="text-xs text-zinc-500">{onboardingData?.companyName || 'Sublime Finance'}</p>
                     <p className="text-[10px] text-zinc-400 mt-1">{user?.email}</p>
                   </div>
                   <div className="pt-4 border-t border-zinc-100">
@@ -2721,7 +2707,7 @@ function DashboardContent() {
               <LayoutDashboard size={48} />
             </div>
             <h2 className="text-2xl font-bold text-zinc-900">Em Breve</h2>
-            <p className="text-zinc-500 max-w-xs">Esta funcionalidade está sendo preparada para o {onboardingData?.companyName || 'Studio Sublime'}.</p>
+            <p className="text-zinc-500 max-w-xs">Esta funcionalidade está sendo preparada para o {onboardingData?.companyName || 'Sublime Finance'}.</p>
             <button onClick={() => setActiveView('dashboard')} className="text-sublime font-bold">Voltar para Dashboard</button>
           </div>
         )}
@@ -3098,7 +3084,7 @@ function DashboardContent() {
                     Passo 2: Autorização Segura
                   </h4>
                   <p className="text-xs text-zinc-500 leading-relaxed">
-                    Você será redirecionado para o ambiente seguro do seu banco. Lá, você deve autorizar o compartilhamento de dados (extratos e saldos) com o {onboardingData?.companyName || 'Studio Sublime'}.
+                    Você será redirecionado para o ambiente seguro do seu banco. Lá, você deve autorizar o compartilhamento de dados (extratos e saldos) com o {onboardingData?.companyName || 'Sublime Finance'}.
                   </p>
                 </div>
 
@@ -3145,7 +3131,7 @@ function DashboardContent() {
       {isShowingOnboardingGuide && (
         <OnboardingGuide 
           onClose={() => setIsShowingOnboardingGuide(false)} 
-          companyName={onboardingData?.companyName || 'Studio Sublime'} 
+          companyName={onboardingData?.companyName || 'Sublime Finance'} 
         />
       )}
     </div>

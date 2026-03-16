@@ -125,6 +125,8 @@ export default function AdminPanel() {
   const [blockingUser, setBlockingUser] = useState<UserProfile | null>(null);
   const [blockReason, setBlockReason] = useState<UserProfile['blockReason']>('other');
   const [blockMessage, setBlockMessage] = useState('');
+  const [auditReport, setAuditReport] = useState<{ type: 'info' | 'warning' | 'error', message: string }[] | null>(null);
+  const [isPerformingAction, setIsPerformingAction] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
@@ -309,6 +311,68 @@ export default function AdminPanel() {
       : [...currentSubAreas, subAreaId];
 
     await updateFeatureBlock(userId, featureId, { subAreas: newSubAreas }, currentBlocked);
+  };
+
+  const handleGlobalPasswordReset = async () => {
+    if (!window.confirm('Isso enviará um e-mail de redefinição de senha para TODOS os usuários cadastrados. Continuar?')) return;
+    
+    setIsPerformingAction(true);
+    const { sendPasswordResetEmail } = await import('firebase/auth');
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const user of users) {
+      if (user.email) {
+        try {
+          await sendPasswordResetEmail(auth, user.email);
+          successCount++;
+        } catch (error) {
+          failCount++;
+        }
+      }
+    }
+
+    await logAudit('global_password_reset_triggered', { successCount, failCount });
+    setMessage({ 
+      type: 'success', 
+      text: `Processo concluído: ${successCount} e-mails enviados, ${failCount} falhas.` 
+    });
+    setIsPerformingAction(false);
+    setTimeout(() => setMessage(null), 5000);
+  };
+
+  const runPermissionAudit = async () => {
+    setIsPerformingAction(true);
+    const report: { type: 'info' | 'warning' | 'error', message: string }[] = [];
+    
+    report.push({ type: 'info', message: `Iniciando auditoria em ${users.length} usuários...` });
+
+    const adminEmail = "jonathastdsantos@gmail.com";
+    
+    users.forEach(u => {
+      // Check for unauthorized admins
+      if (u.role === 'admin' && u.email !== adminEmail) {
+        report.push({ type: 'warning', message: `Usuário Admin detectado: ${u.email} (Verifique se isso é esperado)` });
+      }
+
+      // Check for blocked users
+      if (u.status === 'blocked') {
+        report.push({ type: 'info', message: `Usuário bloqueado: ${u.email} - Motivo: ${u.blockReason || 'Não especificado'}` });
+      }
+
+      // Check for missing metadata
+      if (!u.metadata) {
+        report.push({ type: 'warning', message: `Usuário sem metadados: ${u.email}` });
+      }
+    });
+
+    if (appConfig?.maintenanceMode) {
+      report.push({ type: 'error', message: "O SISTEMA ESTÁ EM MODO MANUTENÇÃO." });
+    }
+
+    setAuditReport(report);
+    await logAudit('permission_audit_performed', { issueCount: report.filter(r => r.type !== 'info').length });
+    setIsPerformingAction(false);
   };
 
   const getFeatureBlock = (blockedFeatures: (string | BlockedFeature)[] = [], featureId: string): BlockedFeature | null => {
@@ -592,17 +656,78 @@ export default function AdminPanel() {
               <Key size={24} />
               <h3 className="font-bold">Ações de Segurança</h3>
             </div>
-            <button className="w-full py-2 bg-zinc-50 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-100 transition-all flex items-center justify-center gap-2">
-              <RefreshCcw size={14} />
+            <button 
+              disabled={isPerformingAction}
+              onClick={handleGlobalPasswordReset}
+              className="w-full py-2 bg-zinc-50 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-100 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isPerformingAction ? <RefreshCcw size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
               Forçar Reset de Senhas
             </button>
-            <button className="w-full py-2 bg-zinc-50 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-100 transition-all flex items-center justify-center gap-2">
-              <Shield size={14} />
+            <button 
+              disabled={isPerformingAction}
+              onClick={runPermissionAudit}
+              className="w-full py-2 bg-zinc-50 text-zinc-600 rounded-xl text-xs font-bold hover:bg-zinc-100 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isPerformingAction ? <RefreshCcw size={14} className="animate-spin" /> : <Shield size={14} />}
               Auditar Permissões
             </button>
           </div>
         </div>
       )}
+
+      {/* Audit Report Modal */}
+      <AnimatePresence>
+        {auditReport && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] p-8 w-full max-w-2xl shadow-2xl max-h-[80vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center">
+                    <Shield size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold">Relatório de Auditoria</h3>
+                    <p className="text-sm text-zinc-500">Resultados da verificação de segurança</p>
+                  </div>
+                </div>
+                <button onClick={() => setAuditReport(null)} className="p-2 hover:bg-zinc-100 rounded-full transition-all">
+                  <XCircle size={24} className="text-zinc-400" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-3 mb-6 pr-2">
+                {auditReport.map((item, i) => (
+                  <div key={i} className={`p-3 rounded-xl border text-xs flex items-start gap-3 ${
+                    item.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' :
+                    item.type === 'warning' ? 'bg-orange-50 border-orange-100 text-orange-700' :
+                    'bg-zinc-50 border-zinc-100 text-zinc-600'
+                  }`}>
+                    <div className="mt-0.5">
+                      {item.type === 'error' ? <AlertTriangle size={14} /> : 
+                       item.type === 'warning' ? <AlertCircle size={14} /> : 
+                       <CheckCircle2 size={14} />}
+                    </div>
+                    <p className="font-medium">{item.message}</p>
+                  </div>
+                ))}
+              </div>
+
+              <button 
+                onClick={() => setAuditReport(null)}
+                className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold hover:bg-zinc-800 transition-all"
+              >
+                Fechar Relatório
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {activeTab === 'logs' && (
         <div className="glass-card overflow-hidden">

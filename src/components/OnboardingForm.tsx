@@ -111,7 +111,7 @@ export default function OnboardingForm({ userId, onComplete, onCancel }: Onboard
             <div className="space-y-2">
               <h2 className="text-2xl font-bold text-zinc-900">Configuração Concluída!</h2>
               <p className="text-zinc-500">
-                Seu Studio Sublime está pronto. <br />
+                Seu Sublime Finance está pronto. <br />
                 Estamos preparando seu painel inteligente...
               </p>
             </div>
@@ -143,7 +143,7 @@ export default function OnboardingForm({ userId, onComplete, onCancel }: Onboard
                   value={formData.companyName} 
                   onChange={handleChange}
                   className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
-                  placeholder="Ex: Studio Sublime" 
+                  placeholder="Ex: Sublime Finance" 
                 />
               </div>
               <div className="space-y-1">
