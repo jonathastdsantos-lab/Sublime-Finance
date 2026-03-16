@@ -36,6 +36,10 @@ service cloud.firestore {
     // Collection: bank_transactions
     // Fields: bankAccountId (string), description (string), amount (number), date (string), category (string), type (string), userId (string)
     //
+    // Collection: users
+    // Document ID: userId
+    // Fields: email (string), displayName (string), photoURL (string), role (string), status (string), blockedFeatures (list), lastLogin (string), createdAt (string)
+    //
     // ===============================================================
 
     // Helper Functions
@@ -50,10 +54,14 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (
+          (request.auth.token.email == "jonathastdsantos@gmail.com") ||
           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-          (request.auth.token.email == "jonathastdsantos@gmail.com" && request.auth.token.email_verified == true)
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
         );
+    }
+
+    function isMasterAdmin() {
+      return isAuthenticated() && request.auth.token.email == "jonathastdsantos@gmail.com";
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -166,6 +174,23 @@ service cloud.firestore {
              data.userId == request.auth.uid;
     }
 
+    function isValidUser(data) {
+      let validRoles = ['admin', 'user'];
+      let validStatuses = ['active', 'blocked'];
+      let allowedFields = ['name', 'email', 'role', 'status', 'createdAt', 'lastLogin', 'blockedFeatures', 'displayName', 'photoURL'];
+      
+      return data.keys().hasOnly(allowedFields) &&
+             data.email is string &&
+             (!('name' in data) || data.name is string) &&
+             (!('displayName' in data) || data.displayName is string) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             data.role in validRoles &&
+             data.status in validStatuses &&
+             (!('blockedFeatures' in data) || data.blockedFeatures is list) &&
+             (!('lastLogin' in data) || data.lastLogin is string) &&
+             (!('createdAt' in data) || data.createdAt is string);
+    }
+
     match /transactions/{id} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
@@ -237,9 +262,17 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) || isAdmin();
-      allow update: if isOwner(userId) || isAdmin();
+      // Prevent recursion by only calling isAdmin() if not the owner
+      allow read: if isOwner(userId) || (userId != request.auth.uid && isAdmin());
+      
+      allow create: if (isOwner(userId) || isAdmin()) && 
+                    isValidUser(request.resource.data) &&
+                    (isMasterAdmin() || isAdmin() || request.resource.data.role == 'user');
+                    
+      allow update: if (isOwner(userId) || isAdmin()) && 
+                    isValidUser(request.resource.data) &&
+                    (isMasterAdmin() || isAdmin() || request.resource.data.role == resource.data.role);
+      
       allow delete: if isAdmin();
     }
   }

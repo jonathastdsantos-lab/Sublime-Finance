@@ -172,9 +172,28 @@
         "userId": { "type": "string" }
       },
       "required": ["bankAccountId", "description", "amount", "date", "category", "type", "userId"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and permissions",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"], "default": "user" },
+        "status": { "type": "string", "enum": ["active", "blocked"], "default": "active" },
+        "blockedFeatures": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastLogin": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "status"]
     }
   },
   "firestore": {
+    "users": {
+      "schema": "User",
+      "description": "Collection of user profiles and permissions"
+    },
     "transactions": {
       "schema": "Transaction",
       "description": "Collection of financial transactions"

@@ -36,6 +36,11 @@ import {
   HelpCircle,
   Info,
   BookOpen,
+  Shield,
+  Lock,
+  Unlock,
+  UserCheck,
+  UserX,
   BarChart as BarChartIcon
 } from 'lucide-react';
 import { 
@@ -74,8 +79,9 @@ import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES
 import { getAIInsights } from '../services/aiService';
 import OnboardingForm from './OnboardingForm';
 import ErrorBoundary from './ErrorBoundary';
+import AdminPanel from './AdminPanel';
 
-type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings';
+type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
@@ -97,6 +103,7 @@ function DashboardContent() {
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [onboardingData, setOnboardingData] = useState<OnboardingData | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
   const [isLoadingOnboarding, setIsLoadingOnboarding] = useState(true);
 
   const [activeView, setActiveView] = useState<View>('dashboard');
@@ -159,17 +166,34 @@ function DashboardContent() {
       if (u) {
         // Ensure users document exists
         try {
-          const userDoc = await getDoc(doc(db, 'users', u.uid));
+          const userDocRef = doc(db, 'users', u.uid);
+          const userDoc = await getDoc(userDocRef);
+          const isAdminEmail = u.email === "jonathastdsantos@gmail.com";
+          
           if (!userDoc.exists()) {
-            await setDoc(doc(db, 'users', u.uid), {
+            const userData = {
               name: u.displayName || 'Usuário',
-              email: u.email,
-              role: 'client',
-              createdAt: new Date().toISOString()
-            });
+              email: u.email || '',
+              role: isAdminEmail ? 'admin' : 'user',
+              status: 'active',
+              createdAt: new Date().toISOString(),
+              lastLogin: new Date().toISOString(),
+              blockedFeatures: []
+            };
+            await setDoc(userDocRef, userData);
+          } else {
+            const updateData: any = {
+              lastLogin: new Date().toISOString(),
+            };
+            // Auto-upgrade to admin if email matches
+            if (isAdminEmail && userDoc.data().role !== 'admin') {
+              updateData.role = 'admin';
+            }
+            await updateDoc(userDocRef, updateData);
           }
         } catch (err) {
           console.error("Error ensuring user document:", err);
+          handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`);
         }
       } else {
         setOnboardingData(null);
@@ -203,6 +227,21 @@ function DashboardContent() {
     });
 
     return () => unsubOnboarding();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setUserProfile(null);
+      return;
+    }
+    const unsub = onSnapshot(doc(db, 'users', user.uid), (doc) => {
+      if (doc.exists()) {
+        setUserProfile(doc.data());
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+    });
+    return () => unsub();
   }, [user]);
 
   useEffect(() => {
@@ -710,18 +749,31 @@ function DashboardContent() {
     }
   };
 
-  const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => (
-    <button 
-      onClick={() => {
-        setActiveView(view);
-        setIsMobileMenuOpen(false);
-      }}
-      className={`nav-item w-full ${activeView === view ? 'nav-item-active' : ''}`}
-    >
-      <Icon size={20} />
-      <span className="font-medium">{label}</span>
-    </button>
-  );
+  useEffect(() => {
+    if (userProfile?.blockedFeatures?.includes(activeView)) {
+      setActiveView('dashboard');
+    }
+  }, [userProfile?.blockedFeatures, activeView]);
+
+  const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => {
+    const isBlocked = userProfile?.blockedFeatures?.includes(view);
+    
+    return (
+      <button 
+        disabled={isBlocked}
+        onClick={() => {
+          if (isBlocked) return;
+          setActiveView(view);
+          setIsMobileMenuOpen(false);
+        }}
+        className={`w-full nav-item ${activeView === view ? 'nav-item-active' : ''} ${isBlocked ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+      >
+        <Icon size={20} />
+        <span className="font-medium flex-1 text-left">{label}</span>
+        {isBlocked && <Lock size={14} className="opacity-60" />}
+      </button>
+    );
+  };
 
   const handleEmailAuth = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -842,6 +894,30 @@ function DashboardContent() {
 
   if (user && (!onboardingData || !onboardingData.onboardingCompleted) && !isDemoMode) {
     return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} />;
+  }
+
+  if (userProfile?.status === 'blocked') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
+        <div className="glass-card p-8 md:p-12 text-center space-y-6 max-w-md w-full">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl">
+            <Lock size={32} />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold font-display text-red-600">Acesso Bloqueado</h1>
+            <p className="text-zinc-500 text-sm">
+              Sua conta foi suspensa por um administrador. Entre em contato com o suporte para mais informações.
+            </p>
+          </div>
+          <button 
+            onClick={handleLogOut}
+            className="w-full bg-zinc-900 text-white px-6 py-3.5 rounded-xl font-bold hover:bg-zinc-800 transition-all shadow-lg"
+          >
+            Sair da Conta
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if ((!user && !isDemoMode) || (authMode === '2fa_start' || authMode === '2fa_check') && !is2FABypassed) {
@@ -1059,6 +1135,9 @@ function DashboardContent() {
           <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
           <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
           <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
+          {userProfile?.role === 'admin' && (
+            <NavItem view="admin" icon={Shield} label="Painel Admin" />
+          )}
         </nav>
 
         <div className="p-4 rounded-2xl bg-sublime/5 border border-sublime/10 space-y-3">
@@ -1133,6 +1212,9 @@ function DashboardContent() {
                 <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
                 <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
                 <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
+                {userProfile?.role === 'admin' && (
+                  <NavItem view="admin" icon={Shield} label="Painel Admin" />
+                )}
               </nav>
               <button onClick={handleLogOut} className="flex items-center gap-3 p-4 text-red-500 font-bold">
                 <LogOut size={20} />
@@ -2237,12 +2319,28 @@ function DashboardContent() {
                     <span className="text-[10px] font-bold text-emerald-600 uppercase">Ativo</span>
                   </button>
                 </div>
+
+                <div className="glass-card p-6 space-y-4 bg-sublime/5 border-sublime/10">
+                  <div className="flex items-center gap-3 text-sublime">
+                    <Shield size={20} />
+                    <h3 className="font-bold text-sm">Desenvolvedor</h3>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-bold text-zinc-900">Jonathas Santos</p>
+                    <p className="text-[10px] text-zinc-500">Criador e Administrador do Sistema</p>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 leading-relaxed">
+                    Este aplicativo foi desenvolvido para proporcionar uma gestão financeira de elite para Studios de Beleza.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {activeView !== 'dashboard' && activeView !== 'fixed_costs' && activeView !== 'mei' && activeView !== 'goals' && activeView !== 'transactions' && activeView !== 'settings' && (
+        {activeView === 'admin' && <AdminPanel />}
+
+        {activeView !== 'dashboard' && activeView !== 'fixed_costs' && activeView !== 'mei' && activeView !== 'goals' && activeView !== 'transactions' && activeView !== 'settings' && activeView !== 'admin' && (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="p-6 bg-zinc-100 rounded-full text-zinc-400">
               <LayoutDashboard size={48} />
