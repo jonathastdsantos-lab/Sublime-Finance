@@ -5,6 +5,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import twilio from "twilio";
 import sgMail from "@sendgrid/mail";
+import { google } from "googleapis";
 
 dotenv.config();
 
@@ -72,6 +73,73 @@ async function startServer() {
         text,
         html,
       });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // 4. Google Calendar OAuth
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    `${process.env.APP_URL}/auth/google/callback`
+  );
+
+  app.get("/api/auth/google/url", (req, res) => {
+    const url = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      scope: ["https://www.googleapis.com/auth/calendar.events"],
+      prompt: "consent"
+    });
+    res.json({ url });
+  });
+
+  app.get("/auth/google/callback", async (req, res) => {
+    const { code } = req.query;
+    try {
+      const { tokens } = await oauth2Client.getToken(code as string);
+      // In a real app, you'd store these tokens in a database associated with the user.
+      // For this demo, we'll send them back to the client to store in localStorage (less secure but works for demo).
+      res.send(`
+        <html>
+          <body>
+            <script>
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', tokens: ${JSON.stringify(tokens)} }, '*');
+              window.close();
+            </script>
+          </body>
+        </html>
+      `);
+    } catch (error: any) {
+      res.status(400).send("Error authenticating with Google");
+    }
+  });
+
+  app.post("/api/calendar/sync", async (req, res) => {
+    const { tokens, events } = req.body;
+    if (!tokens) return res.status(401).json({ error: "No tokens provided" });
+
+    const auth = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    auth.setCredentials(tokens);
+
+    const calendar = google.calendar({ version: "v3", auth });
+
+    try {
+      for (const event of events) {
+        await calendar.events.insert({
+          calendarId: "primary",
+          requestBody: {
+            summary: event.summary,
+            description: event.description,
+            start: { date: event.date },
+            end: { date: event.date },
+          },
+        });
+      }
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });

@@ -80,6 +80,7 @@ import { getAIInsights } from '../services/aiService';
 import OnboardingForm from './OnboardingForm';
 import ErrorBoundary from './ErrorBoundary';
 import AdminPanel from './AdminPanel';
+import OnboardingGuide from './OnboardingGuide';
 
 type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
@@ -127,6 +128,7 @@ function DashboardContent() {
   const [isAddingMei, setIsAddingMei] = useState(false);
   const [isAddingGoal, setIsAddingGoal] = useState(false);
   const [isShowingBankGuide, setIsShowingBankGuide] = useState(false);
+  const [isShowingOnboardingGuide, setIsShowingOnboardingGuide] = useState(false);
 
   useEffect(() => {
     if (onboardingData?.primaryColor) {
@@ -146,6 +148,80 @@ function DashboardContent() {
 
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [transactionToDelete, setTransactionToDelete] = useState<string | null>(null);
+
+  const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
+  const [googleTokens, setGoogleTokens] = useState<any>(() => {
+    const saved = localStorage.getItem('google_calendar_tokens');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'GOOGLE_AUTH_SUCCESS') {
+        const tokens = event.data.tokens;
+        setGoogleTokens(tokens);
+        localStorage.setItem('google_calendar_tokens', JSON.stringify(tokens));
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const connectGoogleCalendar = async () => {
+    try {
+      const res = await fetch('/api/auth/google/url');
+      const { url } = await res.json();
+      window.open(url, 'google_auth', 'width=600,height=700');
+    } catch (error) {
+      console.error('Error getting Google Auth URL:', error);
+    }
+  };
+
+  const syncToGoogleCalendar = async () => {
+    if (!googleTokens) return;
+    setIsSyncingCalendar(true);
+    try {
+      const events = [
+        ...meiObligations.map(mei => ({
+          summary: `MEI: ${mei.name}`,
+          description: `Vencimento da obrigação MEI: ${mei.name}. Valor: R$ ${mei.amount}`,
+          date: mei.due_date
+        })),
+        ...fixedCosts.map(cost => {
+          const today = new Date();
+          const dueDate = new Date(today.getFullYear(), today.getMonth(), cost.due_day);
+          return {
+            summary: `Custo Fixo: ${cost.name}`,
+            description: `Vencimento do custo fixo: ${cost.name}. Valor: R$ ${cost.amount}`,
+            date: dueDate.toISOString().split('T')[0]
+          };
+        })
+      ];
+
+      const res = await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens: googleTokens, events })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('Calendário sincronizado com sucesso!');
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (error: any) {
+      console.error('Error syncing calendar:', error);
+      if (error.message?.includes('invalid_grant')) {
+        setGoogleTokens(null);
+        localStorage.removeItem('google_calendar_tokens');
+        alert('Sua sessão do Google expirou. Por favor, conecte novamente.');
+      } else {
+        alert('Erro ao sincronizar calendário.');
+      }
+    } finally {
+      setIsSyncingCalendar(false);
+    }
+  };
 
   useEffect(() => {
     const testConnection = async () => {
@@ -224,6 +300,12 @@ function DashboardContent() {
         const data = doc.data() as OnboardingData;
         setOnboardingData(data);
         setGoal(data.revenueGoal);
+        
+        // Show guide if just finished onboarding
+        if (data.onboardingCompleted && !localStorage.getItem(`guide_shown_${user.uid}`)) {
+          setIsShowingOnboardingGuide(true);
+          localStorage.setItem(`guide_shown_${user.uid}`, 'true');
+        }
       }
       setIsLoadingOnboarding(false);
     }, (error) => {
@@ -2313,6 +2395,50 @@ function DashboardContent() {
                 </div>
 
                 <div className="glass-card p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-sm">Integrações</h3>
+                    <Calendar size={18} className="text-sublime" />
+                  </div>
+                  <p className="text-xs text-zinc-500">Sincronize seus vencimentos com o Google Calendar para nunca mais esquecer um pagamento.</p>
+                  
+                  {!googleTokens ? (
+                    <button 
+                      onClick={connectGoogleCalendar}
+                      className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-white border border-zinc-200 hover:bg-zinc-50 transition-all font-bold text-sm"
+                    >
+                      <img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
+                      Conectar Google Calendar
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="text-[10px] font-bold text-emerald-700 uppercase">Google Conectado</span>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setGoogleTokens(null);
+                            localStorage.removeItem('google_calendar_tokens');
+                          }}
+                          className="text-[10px] font-bold text-red-600 hover:underline"
+                        >
+                          Desconectar
+                        </button>
+                      </div>
+                      <button 
+                        onClick={syncToGoogleCalendar}
+                        disabled={isSyncingCalendar}
+                        className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-sublime text-white hover:bg-sublime/90 transition-all font-bold text-sm disabled:opacity-50"
+                      >
+                        {isSyncingCalendar ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                        Sincronizar Vencimentos Agora
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="glass-card p-6 space-y-4">
                   <h3 className="font-bold text-sm">Segurança</h3>
                   <button className="w-full flex items-center justify-between p-3 rounded-xl border border-zinc-100 hover:bg-zinc-50 transition-all text-sm">
                     <span>Alterar Senha</span>
@@ -2771,6 +2897,12 @@ function DashboardContent() {
           />
         )}
       </AnimatePresence>
+      {isShowingOnboardingGuide && (
+        <OnboardingGuide 
+          onClose={() => setIsShowingOnboardingGuide(false)} 
+          companyName={onboardingData?.companyName || 'Studio Sublime'} 
+        />
+      )}
     </div>
   );
 }
