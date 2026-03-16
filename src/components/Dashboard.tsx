@@ -42,7 +42,10 @@ import {
   UserCheck,
   UserX,
   Eye,
-  BarChart as BarChartIcon
+  BarChart as BarChartIcon,
+  Users,
+  Percent,
+  CalendarCheck
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -75,16 +78,17 @@ import {
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, resetPassword, handleFirestoreError, OperationType } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig } from '../types';
+import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig, Partner, Commission, Appointment } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
-import { getAIInsights } from '../services/aiService';
+import { getFinancialAdvice, predictCashFlow, getAIInsights } from '../services/aiService';
+import Markdown from 'react-markdown';
 import OnboardingForm from './OnboardingForm';
 import ErrorBoundary from './ErrorBoundary';
 import AdminPanel from './AdminPanel';
 import OnboardingGuide from './OnboardingGuide';
 import BlockedScreen from './BlockedScreen';
 
-type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin';
+type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin' | 'partners' | 'commissions' | 'appointments';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
@@ -119,6 +123,9 @@ function DashboardContent() {
   const [meiObligations, setMeiObligations] = useState<MeiObligation[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [commissions, setCommissions] = useState<Commission[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [weddingGoal, setWeddingGoal] = useState<WeddingGoal | null>(null);
   const [goal, setGoal] = useState<number>(8000);
   
@@ -130,6 +137,9 @@ function DashboardContent() {
   const [isAddingFixedCost, setIsAddingFixedCost] = useState(false);
   const [isAddingMei, setIsAddingMei] = useState(false);
   const [isAddingGoal, setIsAddingGoal] = useState(false);
+  const [isAddingPartner, setIsAddingPartner] = useState(false);
+  const [isAddingCommission, setIsAddingCommission] = useState(false);
+  const [isAddingAppointment, setIsAddingAppointment] = useState(false);
   const [isShowingBankGuide, setIsShowingBankGuide] = useState(false);
   const [isShowingOnboardingGuide, setIsShowingOnboardingGuide] = useState(false);
 
@@ -141,6 +151,8 @@ function DashboardContent() {
     }
   }, [onboardingData?.primaryColor]);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
+  const [aiAdvice, setAiAdvice] = useState<string>('');
+  const [cashFlowPrediction, setCashFlowPrediction] = useState<any>(null);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -198,7 +210,12 @@ function DashboardContent() {
             description: `Vencimento do custo fixo: ${cost.name}. Valor: R$ ${cost.amount}`,
             date: dueDate.toISOString().split('T')[0]
           };
-        })
+        }),
+        ...appointments.map(app => ({
+          summary: `Serviço: ${app.clientName}`,
+          description: `Serviço de ${app.service}. Valor: R$ ${app.price}`,
+          date: app.time.split('T')[0]
+        }))
       ];
 
       const res = await fetch('/api/calendar/sync', {
@@ -407,6 +424,30 @@ function DashboardContent() {
       handleFirestoreError(error, OperationType.LIST, 'bank_accounts');
     });
 
+    const qPartners = query(collection(db, 'partners'), where('userId', '==', user.uid));
+    const unsubPartners = onSnapshot(qPartners, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Partner));
+      setPartners(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'partners');
+    });
+
+    const qCommissions = query(collection(db, 'commissions'), where('userId', '==', user.uid));
+    const unsubCommissions = onSnapshot(qCommissions, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Commission));
+      setCommissions(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'commissions');
+    });
+
+    const qAppointments = query(collection(db, 'appointments'), where('userId', '==', user.uid));
+    const unsubAppointments = onSnapshot(qAppointments, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Appointment));
+      setAppointments(data);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'appointments');
+    });
+
     const unsubConfig = onSnapshot(doc(db, 'app_config', 'global'), (doc) => {
       if (doc.exists()) {
         setAppConfig({ id: 'global', ...doc.data() } as AppConfig);
@@ -423,6 +464,9 @@ function DashboardContent() {
       unsubMei();
       unsubGoals();
       unsubBank();
+      unsubPartners();
+      unsubCommissions();
+      unsubAppointments();
       unsubConfig();
     };
   }, [user]);
@@ -431,12 +475,28 @@ function DashboardContent() {
     if (!user || transactions.length === 0) return;
     const fetchAI = async () => {
       setIsLoadingAI(true);
-      const insights = await getAIInsights(transactions, goal, totalIncome, onboardingData?.companyName);
-      setAiInsights(insights);
-      setIsLoadingAI(false);
+      try {
+        // Legacy insights for dashboard
+        const insights = await getAIInsights(transactions, goal, totalIncome, onboardingData?.companyName);
+        setAiInsights(insights);
+
+        // Advanced advice
+        if (onboardingData) {
+          const advice = await getFinancialAdvice(transactions, partners, commissions, fixedCosts, goal, onboardingData);
+          setAiAdvice(advice);
+        }
+
+        // Cash flow prediction
+        const prediction = await predictCashFlow(transactions);
+        setCashFlowPrediction(prediction);
+      } catch (error) {
+        console.error("AI Fetch error:", error);
+      } finally {
+        setIsLoadingAI(false);
+      }
     };
     fetchAI();
-  }, [transactions.length, goal]);
+  }, [transactions.length, goal, partners.length, commissions.length, fixedCosts.length]);
 
   // Stats
   const currentMonthTransactions = transactions.filter(t => {
@@ -741,6 +801,63 @@ function DashboardContent() {
       setTransactionToDelete(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `transactions/${id}`);
+    }
+  };
+
+  const handleAddPartner = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'partners'), {
+        name: formData.get('name'),
+        role: formData.get('role'),
+        commissionRate: Number(formData.get('commissionRate')),
+        email: formData.get('email'),
+        phone: formData.get('phone'),
+        userId: user.uid
+      });
+      setIsAddingPartner(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'partners');
+    }
+  };
+
+  const handleAddCommission = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'commissions'), {
+        partnerId: formData.get('partnerId'),
+        transactionId: formData.get('transactionId') || '',
+        amount: Number(formData.get('amount')),
+        date: formData.get('date'),
+        status: 'pendente',
+        userId: user.uid
+      });
+      setIsAddingCommission(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'commissions');
+    }
+  };
+
+  const handleAddAppointment = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+    const formData = new FormData(e.currentTarget);
+    try {
+      await addDoc(collection(db, 'appointments'), {
+        clientName: formData.get('clientName'),
+        service: formData.get('service'),
+        time: formData.get('time'),
+        price: Number(formData.get('price')),
+        status: 'pendente',
+        userId: user.uid
+      });
+      setIsAddingAppointment(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'appointments');
     }
   };
 
@@ -1346,7 +1463,10 @@ function DashboardContent() {
 
         <nav className="flex-1 space-y-2">
           <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
+          <NavItem view="appointments" icon={CalendarCheck} label="Agenda" />
           <NavItem view="transactions" icon={Repeat} label="Transações" />
+          <NavItem view="partners" icon={Users} label="Parceiros" />
+          <NavItem view="commissions" icon={Percent} label="Comissões" />
           <NavItem view="fixed_costs" icon={DollarSign} label="Custos Fixos" />
           <NavItem view="mei" icon={FileText} label="MEI" />
           <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
@@ -1423,7 +1543,10 @@ function DashboardContent() {
               </div>
               <nav className="flex-1 space-y-2">
                 <NavItem view="dashboard" icon={LayoutDashboard} label="Dashboard" />
+                <NavItem view="appointments" icon={CalendarCheck} label="Agenda" />
                 <NavItem view="transactions" icon={Repeat} label="Transações" />
+                <NavItem view="partners" icon={Users} label="Parceiros" />
+                <NavItem view="commissions" icon={Percent} label="Comissões" />
                 <NavItem view="fixed_costs" icon={DollarSign} label="Custos Fixos" />
                 <NavItem view="mei" icon={FileText} label="MEI" />
                 <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
@@ -2380,22 +2503,401 @@ function DashboardContent() {
 
         {activeView === 'ai' && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold">IA Financeira</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {!isFeatureBlocked('ai', 'chat') && (
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">IA Consultora</h2>
+                <p className="text-sm text-zinc-500">Sua inteligência financeira personalizada.</p>
+              </div>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="p-2 bg-zinc-100 rounded-xl hover:bg-zinc-200 transition-all"
+                title="Recarregar Análise"
+              >
+                <RefreshCw size={20} className={isLoadingAI ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-6">
+                <div className="glass-card p-8 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-4">
+                    <Sparkles className="text-sublime/20 w-12 h-12" />
+                  </div>
+                  
+                  {isLoadingAI ? (
+                    <div className="space-y-4 animate-pulse">
+                      <div className="h-4 bg-zinc-100 rounded w-3/4" />
+                      <div className="h-4 bg-zinc-100 rounded w-full" />
+                      <div className="h-4 bg-zinc-100 rounded w-5/6" />
+                      <div className="h-32 bg-zinc-50 rounded w-full" />
+                    </div>
+                  ) : (
+                    <div className="prose prose-zinc max-w-none">
+                      <div className="markdown-body">
+                        <Markdown>{aiAdvice || 'Nenhuma análise disponível no momento. Adicione mais transações para uma análise profunda.'}</Markdown>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="glass-card p-6">
-                  <Sparkles size={24} className="text-sublime mb-4" />
-                  <h3 className="font-bold mb-2">Chat com IA</h3>
-                  <p className="text-sm text-zinc-500">Tire suas dúvidas financeiras em tempo real.</p>
+                  <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
+                    <TrendingUp size={20} className="text-emerald-500" />
+                    Previsão de Fluxo de Caixa
+                  </h3>
+                  
+                  {isLoadingAI ? (
+                    <div className="h-64 bg-zinc-50 animate-pulse rounded-xl" />
+                  ) : cashFlowPrediction ? (
+                    <div className="space-y-6">
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={cashFlowPrediction.predictions}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                            <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
+                            <Tooltip 
+                              contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                            />
+                            <Bar dataKey="estimatedIncome" fill="#10b981" radius={[4, 4, 0, 0]} name="Entrada Prevista" />
+                            <Bar dataKey="estimatedExpense" fill="#ef4444" radius={[4, 4, 0, 0]} name="Saída Prevista" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
+                        <p className="text-sm text-emerald-800 font-medium">
+                          <Info size={16} className="inline mr-2" />
+                          {cashFlowPrediction.advice}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-12 text-center text-zinc-400 italic">
+                      Dados insuficientes para previsão.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="glass-card p-6 bg-zinc-900 text-white">
+                  <h3 className="font-bold mb-4 flex items-center gap-2">
+                    <AlertTriangle size={18} className="text-orange-400" />
+                    Fiscalização MEI
+                  </h3>
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end">
+                      <span className="text-xs text-zinc-400">Faturamento Anual</span>
+                      <span className="text-lg font-bold">R$ {transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0).toLocaleString()}</span>
+                    </div>
+                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div 
+                        className={`h-full transition-all ${
+                          (transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0) / 81000) > 0.8 ? 'bg-orange-500' : 'bg-sublime'
+                        }`}
+                        style={{ width: `${Math.min((transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0) / 81000) * 100, 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-zinc-400">
+                      Limite MEI: R$ 81.000,00. 
+                      { (transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0) / 81000) > 0.8 
+                        ? ' Atenção! Você está chegando perto do limite.' 
+                        : ' Você está dentro da margem de segurança.' }
+                    </p>
+                  </div>
+                </div>
+
+                <div className="glass-card p-6">
+                  <h3 className="font-bold mb-4">Dicas Rápidas</h3>
+                  <div className="space-y-3">
+                    {aiInsights.map((insight, i) => (
+                      <div key={i} className="flex gap-3 p-3 rounded-xl bg-zinc-50 border border-zinc-100">
+                        <div className="w-1.5 h-1.5 rounded-full bg-sublime mt-1.5 shrink-0" />
+                        <p className="text-xs text-zinc-600 leading-relaxed">{insight}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView === 'appointments' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Agenda de Serviços</h2>
+                <p className="text-sm text-zinc-500">Gerencie seus agendamentos e preveja o faturamento.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={connectGoogleCalendar}
+                  className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all ${
+                    googleTokens ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-zinc-100 text-zinc-600 border border-zinc-200'
+                  }`}
+                >
+                  <Calendar size={20} />
+                  {googleTokens ? 'Google Calendar Conectado' : 'Conectar Google Calendar'}
+                </button>
+                <button 
+                  onClick={() => setIsAddingAppointment(true)}
+                  className="bg-sublime text-white px-4 py-2 rounded-xl font-bold shadow-lg shadow-sublime/20 flex items-center gap-2"
+                >
+                  <Plus size={20} />
+                  Novo Agendamento
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 glass-card p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="font-bold">Agendamentos da Semana</h3>
+                  <div className="flex items-center gap-2 text-xs font-bold text-zinc-400">
+                    <span className="w-3 h-3 rounded-full bg-emerald-500" /> Confirmado
+                    <span className="w-3 h-3 rounded-full bg-orange-500" /> Pendente
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                  {appointments.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime()).map(app => (
+                    <div key={app.id} className="flex items-center justify-between p-4 rounded-2xl bg-zinc-50 border border-zinc-100 group">
+                      <div className="flex items-center gap-4">
+                        <div className="text-center min-w-[60px]">
+                          <p className="text-[10px] font-bold uppercase text-zinc-400">{format(parseISO(app.time), 'EEE', { locale: ptBR })}</p>
+                          <p className="text-lg font-bold text-zinc-900">{format(parseISO(app.time), 'dd')}</p>
+                        </div>
+                        <div className="w-px h-8 bg-zinc-200" />
+                        <div>
+                          <p className="font-bold text-zinc-900">{app.clientName}</p>
+                          <p className="text-xs text-zinc-500">{app.service} • {format(parseISO(app.time), 'HH:mm')}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <p className="font-bold text-sm text-zinc-900">R$ {app.price.toLocaleString()}</p>
+                          <span className={`text-[10px] font-bold uppercase ${
+                            app.status === 'confirmado' ? 'text-emerald-600' : 'text-orange-600'
+                          }`}>
+                            {app.status}
+                          </span>
+                        </div>
+                        <button 
+                          onClick={async () => {
+                            if (confirm('Excluir agendamento?')) {
+                              await deleteDoc(doc(db, 'appointments', app.id));
+                            }
+                          }}
+                          className="p-2 text-zinc-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {appointments.length === 0 && (
+                    <div className="p-12 text-center text-zinc-400 italic">
+                      Nenhum agendamento para os próximos dias.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="glass-card p-6 bg-sublime text-white">
+                <h3 className="font-bold mb-6 flex items-center gap-2">
+                  <TrendingUp size={20} />
+                  Previsão Semanal
+                </h3>
+                <div className="space-y-6">
+                  <div className="p-4 rounded-2xl bg-white/10 border border-white/20">
+                    <p className="text-xs font-bold uppercase opacity-60 mb-1">Faturamento Previsto</p>
+                    <p className="text-3xl font-bold">R$ {appointments.reduce((sum, a) => sum + a.price, 0).toLocaleString()}</p>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <p className="text-xs font-bold uppercase opacity-60">Distribuição por Status</p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs">
+                        <span>Confirmados</span>
+                        <span>R$ {appointments.filter(a => a.status === 'confirmado').reduce((sum, a) => sum + a.price, 0).toLocaleString()}</span>
+                      </div>
+                      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-white" 
+                          style={{ width: `${(appointments.filter(a => a.status === 'confirmado').reduce((sum, a) => sum + a.price, 0) / (appointments.reduce((sum, a) => sum + a.price, 0) || 1)) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={syncToGoogleCalendar}
+                    disabled={!googleTokens || isSyncingCalendar}
+                    className="w-full py-3 bg-white text-sublime rounded-xl font-bold hover:bg-white/90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <RefreshCw size={18} className={isSyncingCalendar ? 'animate-spin' : ''} />
+                    {isSyncingCalendar ? 'Sincronizando...' : 'Sincronizar Agora'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView === 'partners' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Parceiros & Profissionais</h2>
+                <p className="text-sm text-zinc-500">Gerencie sua equipe e taxas de comissão.</p>
+              </div>
+              <button 
+                onClick={() => setIsAddingPartner(true)}
+                className="bg-sublime text-white px-4 py-2 rounded-xl font-bold shadow-lg shadow-sublime/20 flex items-center gap-2"
+              >
+                <Plus size={20} />
+                Novo Parceiro
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {partners.map(p => (
+                <div key={p.id} className="glass-card p-6 space-y-4 group relative">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-400">
+                      <User size={24} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-zinc-900">{p.name}</h3>
+                      <p className="text-xs text-zinc-500 uppercase font-bold">{p.role}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-100">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-zinc-400">Comissão</p>
+                      <p className="text-lg font-bold text-sublime">{p.commissionRate}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-zinc-400">Total Pago</p>
+                      <p className="text-lg font-bold text-zinc-900">
+                        R$ {commissions.filter(c => c.partnerId === p.id && c.status === 'pago').reduce((sum, c) => sum + c.amount, 0).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-4">
+                    <button className="flex-1 py-2 bg-zinc-100 text-zinc-600 rounded-lg text-xs font-bold hover:bg-zinc-200 transition-all">
+                      Editar
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        if (confirm('Excluir parceiro?')) {
+                          await deleteDoc(doc(db, 'partners', p.id));
+                        }
+                      }}
+                      className="p-2 text-zinc-400 hover:text-red-500 transition-all"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {partners.length === 0 && (
+                <div className="col-span-full p-12 text-center text-zinc-400 italic glass-card">
+                  Nenhum parceiro cadastrado.
                 </div>
               )}
-              {!isFeatureBlocked('ai', 'reports') && (
-                <div className="glass-card p-6">
-                  <FileText size={24} className="text-zinc-900 mb-4" />
-                  <h3 className="font-bold mb-2">Relatórios Inteligentes</h3>
-                  <p className="text-sm text-zinc-500">Análises detalhadas geradas automaticamente.</p>
-                </div>
-              )}
+            </div>
+          </div>
+        )}
+
+        {activeView === 'commissions' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Gestão de Comissões</h2>
+                <p className="text-sm text-zinc-500">Controle de pagamentos para parceiros.</p>
+              </div>
+              <button 
+                onClick={() => setIsAddingCommission(true)}
+                className="bg-sublime text-white px-4 py-2 rounded-xl font-bold shadow-lg shadow-sublime/20 flex items-center gap-2"
+              >
+                <Plus size={20} />
+                Lançar Comissão
+              </button>
+            </div>
+
+            <div className="glass-card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-zinc-100 bg-zinc-50/50">
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Data</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Parceiro</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 text-right">Valor</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Status</th>
+                      <th className="p-4 text-[10px] font-bold uppercase text-zinc-400">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {commissions.map((c) => {
+                      const partner = partners.find(p => p.id === c.partnerId);
+                      return (
+                        <tr key={c.id} className="hover:bg-zinc-50/50 transition-colors">
+                          <td className="p-4 text-xs text-zinc-500">{format(parseISO(c.date), 'dd/MM/yyyy')}</td>
+                          <td className="p-4">
+                            <p className="text-sm font-bold text-zinc-900">{partner?.name || 'Parceiro Excluído'}</p>
+                            <p className="text-[10px] text-zinc-400 uppercase">{partner?.role}</p>
+                          </td>
+                          <td className="p-4 text-sm font-bold text-right text-zinc-900">
+                            R$ {c.amount.toLocaleString()}
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase ${
+                              c.status === 'pago' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {c.status}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              {c.status === 'pendente' && (
+                                <button 
+                                  onClick={async () => {
+                                    await updateDoc(doc(db, 'commissions', c.id), { status: 'pago' });
+                                  }}
+                                  className="text-[10px] font-bold text-emerald-600 hover:underline"
+                                >
+                                  Marcar como Pago
+                                </button>
+                              )}
+                              <button 
+                                onClick={async () => {
+                                  if (confirm('Excluir comissão?')) {
+                                    await deleteDoc(doc(db, 'commissions', c.id));
+                                  }
+                                }}
+                                className="p-2 text-zinc-400 hover:text-red-500 transition-all"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {commissions.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-12 text-center text-zinc-400 italic text-sm">
+                          Nenhuma comissão registrada.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -3133,6 +3635,131 @@ function DashboardContent() {
           onClose={() => setIsShowingOnboardingGuide(false)} 
           companyName={onboardingData?.companyName || 'Sublime Finance'} 
         />
+      )}
+      {/* Modal Novo Parceiro */}
+      {isAddingPartner && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold font-display">Novo Parceiro</h3>
+              <button onClick={() => setIsAddingPartner(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-all">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleAddPartner} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Nome Completo</label>
+                <input name="name" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Cargo / Especialidade</label>
+                <input name="role" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Taxa de Comissão (%)</label>
+                <input name="commissionRate" type="number" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">E-mail</label>
+                  <input name="email" type="email" className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Telefone</label>
+                  <input name="phone" className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+                </div>
+              </div>
+              <button type="submit" className="w-full py-4 bg-sublime text-white rounded-xl font-bold shadow-lg shadow-sublime/20">
+                Salvar Parceiro
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Lançar Comissão */}
+      {isAddingCommission && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold font-display">Lançar Comissão</h3>
+              <button onClick={() => setIsAddingCommission(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-all">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleAddCommission} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Parceiro</label>
+                <select name="partnerId" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none">
+                  <option value="">Selecione um parceiro</option>
+                  {partners.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Valor da Comissão (R$)</label>
+                <input name="amount" type="number" step="0.01" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Data</label>
+                <input name="date" type="date" defaultValue={new Date().toISOString().split('T')[0]} required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <button type="submit" className="w-full py-4 bg-sublime text-white rounded-xl font-bold shadow-lg shadow-sublime/20">
+                Registrar Comissão
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Novo Agendamento */}
+      {isAddingAppointment && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold font-display">Novo Agendamento</h3>
+              <button onClick={() => setIsAddingAppointment(false)} className="p-2 hover:bg-zinc-100 rounded-full transition-all">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleAddAppointment} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Nome do Cliente</label>
+                <input name="clientName" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Serviço</label>
+                <input name="service" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Data e Hora</label>
+                  <input name="time" type="datetime-local" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase mb-1">Preço (R$)</label>
+                  <input name="price" type="number" step="0.01" required className="w-full p-3 bg-zinc-50 border border-zinc-100 rounded-xl focus:ring-2 focus:ring-sublime/20 outline-none" />
+                </div>
+              </div>
+              <button type="submit" className="w-full py-4 bg-sublime text-white rounded-xl font-bold shadow-lg shadow-sublime/20">
+                Agendar Serviço
+              </button>
+            </form>
+          </motion.div>
+        </div>
       )}
     </div>
   );

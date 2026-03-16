@@ -168,3 +168,34 @@ export interface BankTransaction {
   type: 'DEBIT' | 'CREDIT';
   userId: string;
 }
+
+export interface Partner {
+  id: string;
+  name: string;
+  role?: string;
+  commissionRate: number;
+  email?: string;
+  phone?: string;
+  userId: string;
+}
+
+export interface Commission {
+  id: string;
+  partnerId: string;
+  transactionId: string;
+  amount: number;
+  status: 'pendente' | 'pago';
+  date: string;
+  userId: string;
+}
+
+export interface Appointment {
+  id: string;
+  clientName: string;
+  service: string;
+  price: number;
+  time: string;
+  status: 'pendente' | 'confirmado' | 'cancelado';
+  googleEventId?: string;
+  userId: string;
+}

@@ -222,6 +222,50 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["action", "timestamp"]
+    },
+    "Partner": {
+      "title": "Partner",
+      "description": "Professional partner/employee in the studio",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "commissionRate": { "type": "number", "description": "Percentage (0-100)" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "commissionRate", "userId"]
+    },
+    "Commission": {
+      "title": "Commission",
+      "description": "Commission payment record",
+      "type": "object",
+      "properties": {
+        "partnerId": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "paid"] },
+        "date": { "type": "string", "format": "date" },
+        "userId": { "type": "string" }
+      },
+      "required": ["partnerId", "transactionId", "amount", "status", "date", "userId"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Scheduled service appointment",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "estimatedValue": { "type": "number" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"] },
+        "googleEventId": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["clientName", "serviceName", "estimatedValue", "startTime", "endTime", "status", "userId"]
     }
   },
   "firestore": {
@@ -272,6 +316,18 @@
     "audit_logs": {
       "schema": "AuditLog",
       "description": "Collection of system audit logs"
+    },
+    "partners": {
+      "schema": "Partner",
+      "description": "Collection of professional partners"
+    },
+    "commissions": {
+      "schema": "Commission",
+      "description": "Collection of commission payments"
+    },
+    "appointments": {
+      "schema": "Appointment",
+      "description": "Collection of scheduled appointments"
     }
   }
 }

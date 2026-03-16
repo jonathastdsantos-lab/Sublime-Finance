@@ -171,6 +171,31 @@ service cloud.firestore {
              data.userId == request.auth.uid;
     }
 
+    function isValidPartner(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.commissionRate is number && data.commissionRate >= 0 && data.commissionRate <= 100 &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidCommission(data) {
+      return data.partnerId is string &&
+             data.transactionId is string &&
+             data.amount is number &&
+             data.status in ['pending', 'paid'] &&
+             data.date is string &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidAppointment(data) {
+      return data.clientName is string &&
+             data.serviceName is string &&
+             data.estimatedValue is number &&
+             data.startTime is string &&
+             data.endTime is string &&
+             data.status in ['scheduled', 'completed', 'cancelled'] &&
+             data.userId == request.auth.uid;
+    }
+
     function isValidBlockedFeature(f) {
       return f is string || (
         f is map &&
@@ -284,6 +309,27 @@ service cloud.firestore {
     match /audit_logs/{id} {
       allow read, create: if isAdmin();
       allow update, delete: if false;
+    }
+
+    match /partners/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidPartner(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidPartner(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /commissions/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidCommission(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidCommission(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /appointments/{id} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidAppointment(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidAppointment(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
   }
 }

@@ -54,7 +54,13 @@ export default function StatementImporter({ onClose, onSuccess }: StatementImpor
 
     try {
       const text = await file.text();
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const apiKey = process.env.GEMINI_API_KEY || "";
+      
+      if (!apiKey) {
+        throw new Error("Chave da API Gemini não configurada. Por favor, configure GEMINI_API_KEY no ambiente.");
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       
       const prompt = `
         Analise o seguinte extrato bancário (pode estar em formato CSV, OFX ou texto simples).
@@ -75,7 +81,7 @@ export default function StatementImporter({ onClose, onSuccess }: StatementImpor
       `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite-preview",
+        model: "gemini-3-flash-preview",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -98,7 +104,15 @@ export default function StatementImporter({ onClose, onSuccess }: StatementImpor
         }
       });
 
-      const result = JSON.parse(response.text || '[]');
+      let responseText = response.text || '[]';
+      // Clean up response text in case AI added markdown blocks
+      if (responseText.includes('```json')) {
+        responseText = responseText.split('```json')[1].split('```')[0];
+      } else if (responseText.includes('```')) {
+        responseText = responseText.split('```')[1].split('```')[0];
+      }
+
+      const result = JSON.parse(responseText.trim());
       setPreviewTransactions(result);
       await logAudit('ai_processing_success', { fileName: file.name, transactionCount: result.length });
     } catch (err: any) {
