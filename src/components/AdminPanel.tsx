@@ -153,6 +153,8 @@ export default function AdminPanel() {
         ...doc.data()
       }));
       setAuditLogs(logs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'audit_logs');
     });
 
     return () => {

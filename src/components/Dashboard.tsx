@@ -411,6 +411,8 @@ function DashboardContent() {
       if (doc.exists()) {
         setAppConfig({ id: 'global', ...doc.data() } as AppConfig);
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'app_config/global');
     });
 
     return () => {

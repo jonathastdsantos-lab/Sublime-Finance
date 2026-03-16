@@ -105,8 +105,7 @@ service cloud.firestore {
              (!('cnpj' in data) || data.cnpj is string) &&
              (!('meiActivity' in data) || data.meiActivity is string) &&
              data.dataEntryMethod is string &&
-             data.onboardingCompleted is bool &&
-             (!('userId' in data) || data.userId == request.auth.uid);
+             data.onboardingCompleted is bool;
     }
 
     function isValidServiceCost(data) {
@@ -202,7 +201,7 @@ service cloud.firestore {
              data.status in validStatuses &&
              (!('isBlocked' in data) || data.isBlocked is bool) &&
              (!('blockMessage' in data) || data.blockMessage is string) &&
-             (!('blockReason' in data) || data.blockReason in validReasons) &&
+             (!('blockReason' in data) || data.blockReason in validReasons || data.blockReason == null) &&
              (!('blockedFeatures' in data) || data.blockedFeatures is list) &&
              (!('lastLogin' in data) || data.lastLogin is string) &&
              (!('createdAt' in data) || data.createdAt is string) &&
@@ -224,17 +223,14 @@ service cloud.firestore {
     }
 
     match /weddingGoals/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
-      allow delete: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update, delete: if isOwner(userId) || isAdmin();
     }
 
     match /onboarding/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidOnboarding(request.resource.data);
-      allow update: if isOwner(userId) && isValidOnboarding(request.resource.data);
-      allow delete: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && isValidOnboarding(request.resource.data);
+      allow delete: if isOwner(userId) || isAdmin();
     }
 
     match /fixedCosts/{id} {

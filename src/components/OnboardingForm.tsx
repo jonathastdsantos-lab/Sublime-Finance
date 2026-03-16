@@ -35,7 +35,7 @@ export default function OnboardingForm({ userId, onComplete, onCancel }: Onboard
     const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: type === 'number' ? Number(value) : value
+      [name]: (type === 'number' || type === 'range') ? Number(value) : value
     }));
   };
 
