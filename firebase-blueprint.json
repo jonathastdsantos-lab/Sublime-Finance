@@ -115,6 +115,8 @@
         "hasPartners": { "type": "boolean" },
         "weddingGoalAmount": { "type": "number" },
         "weddingDate": { "type": "string" },
+        "cnpj": { "type": "string" },
+        "meiActivity": { "type": "string" },
         "dataEntryMethod": { "type": "string" },
         "onboardingCompleted": { "type": "boolean" },
         "userId": { "type": "string" }

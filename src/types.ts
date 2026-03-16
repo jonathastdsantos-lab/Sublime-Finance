@@ -95,6 +95,8 @@ export interface OnboardingData {
   hasPartners: boolean;
   weddingGoalAmount?: number;
   weddingDate?: string;
+  cnpj?: string;
+  meiActivity?: string;
   dataEntryMethod: 'manual' | 'upload';
   onboardingCompleted: boolean;
   userId?: string;

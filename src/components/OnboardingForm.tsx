@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, DollarSign, Heart, LayoutDashboard, FileText } from 'lucide-react';
+import { Sparkles, DollarSign, Heart, LayoutDashboard, FileText, Building2 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { OnboardingData } from '../types';
@@ -14,6 +14,7 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
   const [step, setStep] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
   const [formData, setFormData] = useState<Partial<OnboardingData>>({
     name: '',
     companyName: '',
@@ -23,6 +24,8 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
     expenseAlertThreshold: 70,
     mainService: 'Cabelo',
     hasPartners: false,
+    cnpj: '',
+    meiActivity: 'Prestação de Serviços',
     dataEntryMethod: 'manual',
     onboardingCompleted: false
   });
@@ -46,7 +49,10 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
     const finalData = { ...formData, onboardingCompleted: true, userId } as OnboardingData;
     try {
       await setDoc(doc(db, 'onboarding', userId), finalData);
-      onComplete(finalData);
+      setIsSuccess(true);
+      setTimeout(() => {
+        onComplete(finalData);
+      }, 3000);
     } catch (err: any) {
       console.error("Onboarding error:", err);
       setError("Erro ao salvar suas configurações. Verifique os campos e tente novamente.");
@@ -75,7 +81,7 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
         </div>
 
         <div className="flex justify-between mb-8">
-          {[1, 2, 3, 4].map((s) => (
+          {[1, 2, 3, 4, 5].map((s) => (
             <div 
               key={s} 
               className={`h-2 flex-1 mx-1 rounded-full transition-all ${s <= step ? 'bg-sublime' : 'bg-zinc-200'}`}
@@ -83,7 +89,30 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
           ))}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        {isSuccess ? (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center space-y-6 py-12"
+          >
+            <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-emerald-100/50">
+              <Sparkles size={40} />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold text-zinc-900">Configuração Concluída!</h2>
+              <p className="text-zinc-500">
+                Seu Studio Sublime está pronto. <br />
+                Estamos preparando seu painel inteligente...
+              </p>
+            </div>
+            <div className="flex justify-center gap-2">
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+          </motion.div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
             <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm font-medium flex items-center gap-2">
               <Sparkles size={18} className="shrink-0" />
@@ -182,8 +211,40 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
           {step === 3 && (
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               <div className="flex items-center gap-2 text-sublime mb-4">
+                <Building2 size={20} />
+                <h2 className="text-xl font-bold">3. Dados do MEI</h2>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">CNPJ (Opcional)</label>
+                <input 
+                  name="cnpj" 
+                  value={formData.cnpj} 
+                  onChange={handleChange}
+                  className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all" 
+                  placeholder="00.000.000/0000-00" 
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Tipo de Atividade</label>
+                <select 
+                  name="meiActivity" 
+                  value={formData.meiActivity} 
+                  onChange={handleChange}
+                  className="w-full p-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-sublime/20 outline-none transition-all"
+                >
+                  <option value="Prestação de Serviços">Prestação de Serviços</option>
+                  <option value="Comércio">Comércio</option>
+                  <option value="Indústria">Indústria</option>
+                </select>
+              </div>
+            </motion.div>
+          )}
+
+          {step === 4 && (
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+              <div className="flex items-center gap-2 text-sublime mb-4">
                 <FileText size={20} />
-                <h2 className="text-xl font-bold">3. Gestão MEI e Operação</h2>
+                <h2 className="text-xl font-bold">4. Operação</h2>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Qual seu serviço 'carro-chefe'?</label>
@@ -221,11 +282,11 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
             </motion.div>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               <div className="flex items-center gap-2 text-sublime mb-4">
                 <Sparkles size={20} />
-                <h2 className="text-xl font-bold">4. Fiscalização por IA</h2>
+                <h2 className="text-xl font-bold">5. Fiscalização por IA</h2>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Como prefere alimentar os dados?</label>
@@ -259,7 +320,7 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
                 Voltar
               </button>
             )}
-            {step < 4 ? (
+            {step < 5 ? (
               <button 
                 type="button" 
                 onClick={nextStep}
@@ -282,6 +343,7 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
             )}
           </div>
         </form>
+        )}
       </motion.div>
     </div>
   );

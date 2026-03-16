@@ -91,6 +91,8 @@ service cloud.firestore {
              data.hasPartners is bool &&
              (!('weddingGoalAmount' in data) || data.weddingGoalAmount is number) &&
              (!('weddingDate' in data) || data.weddingDate is string) &&
+             (!('cnpj' in data) || data.cnpj is string) &&
+             (!('meiActivity' in data) || data.meiActivity is string) &&
              data.dataEntryMethod is string &&
              data.onboardingCompleted is bool &&
              (!('userId' in data) || data.userId == request.auth.uid);

@@ -743,7 +743,7 @@ function DashboardContent() {
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
         message = 'E-mail ou senha incorretos.';
       } else if (error.code === 'auth/operation-not-allowed') {
-        message = 'O login com e-mail e senha não está ativado no Firebase.';
+        message = 'O login com e-mail e senha não está ativado no seu Console do Firebase. Por favor, ative o provedor "E-mail/Senha" nas configurações de Autenticação.';
       }
       
       setAuthError(message);
@@ -803,7 +803,11 @@ function DashboardContent() {
       await signInWithGoogle();
     } catch (error: any) {
       console.error("Google Auth error:", error);
-      setAuthError("Erro ao entrar com Google. Tente novamente.");
+      let message = "Erro ao entrar com Google. Tente novamente.";
+      if (error.code === 'auth/operation-not-allowed') {
+        message = 'O login com Google não está ativado no seu Console do Firebase. Por favor, ative o provedor "Google" nas configurações de Autenticação.';
+      }
+      setAuthError(message);
     } finally {
       setIsLoadingAuth(false);
     }
@@ -1530,8 +1534,8 @@ function DashboardContent() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-zinc-900 font-display">Obrigações MEI</h2>
-                <p className="text-sm text-zinc-500">Acompanhe seus impostos e declarações anuais.</p>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Controle MEI</h2>
+                <p className="text-sm text-zinc-500">Gestão completa do seu Microempreendedor Individual.</p>
               </div>
               <div className="flex gap-2">
                 <button 
@@ -1549,6 +1553,25 @@ function DashboardContent() {
                   <Plus size={20} />
                   <span>Nova Guia</span>
                 </button>
+              </div>
+            </div>
+
+            {/* MEI Profile Card */}
+            <div className="glass-card p-6 grid grid-cols-1 md:grid-cols-3 gap-6 bg-gradient-to-br from-zinc-900 to-zinc-800 text-white border-none shadow-xl">
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase text-zinc-400">CNPJ</p>
+                <p className="text-lg font-bold tracking-wider">{onboardingData?.cnpj || 'Não informado'}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase text-zinc-400">Atividade Principal</p>
+                <p className="text-lg font-bold">{onboardingData?.meiActivity || 'Prestação de Serviços'}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase text-zinc-400">Limite de Faturamento Anual</p>
+                <div className="flex items-end gap-2">
+                  <p className="text-lg font-bold">R$ 81.000,00</p>
+                  <span className="text-[10px] text-zinc-400 mb-1">/ R$ 6.750,00 mês</span>
+                </div>
               </div>
             </div>
 
