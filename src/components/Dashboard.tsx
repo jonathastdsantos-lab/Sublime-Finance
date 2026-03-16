@@ -780,7 +780,7 @@ export default function Dashboard() {
     );
   }
 
-  if (user && onboardingData && !onboardingData.onboardingCompleted) {
+  if (user && (!onboardingData || !onboardingData.onboardingCompleted)) {
     return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} />;
   }
 

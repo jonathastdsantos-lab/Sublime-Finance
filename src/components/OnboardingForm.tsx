@@ -12,6 +12,8 @@ interface OnboardingFormProps {
 
 export default function OnboardingForm({ userId, onComplete }: OnboardingFormProps) {
   const [step, setStep] = useState(1);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState<Partial<OnboardingData>>({
     name: '',
     companyName: '',
@@ -39,12 +41,18 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalData = { ...formData, onboardingCompleted: true } as OnboardingData;
+    setIsSubmitting(true);
+    setError(null);
+    const finalData = { ...formData, onboardingCompleted: true, userId } as OnboardingData;
     try {
       await setDoc(doc(db, 'onboarding', userId), finalData);
       onComplete(finalData);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `onboarding/${userId}`);
+    } catch (err: any) {
+      console.error("Onboarding error:", err);
+      setError("Erro ao salvar suas configurações. Verifique os campos e tente novamente.");
+      handleFirestoreError(err, OperationType.WRITE, `onboarding/${userId}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -76,6 +84,12 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+          {error && (
+            <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm font-medium flex items-center gap-2">
+              <Sparkles size={18} className="shrink-0" />
+              {error}
+            </div>
+          )}
           {step === 1 && (
             <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
               <div className="flex items-center gap-2 text-sublime mb-4">
@@ -256,9 +270,14 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
             ) : (
               <button 
                 type="submit"
-                className="flex-1 p-4 rounded-xl bg-sublime text-white font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20"
+                disabled={isSubmitting}
+                className="flex-1 p-4 rounded-xl bg-sublime text-white font-bold hover:bg-sublime-dark transition-all shadow-lg shadow-sublime/20 disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                Gerar meu Plano com IA 🤖
+                {isSubmitting ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>Gerar meu Plano com IA 🤖</>
+                )}
               </button>
             )}
           </div>

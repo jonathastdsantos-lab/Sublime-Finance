@@ -97,6 +97,7 @@ export interface OnboardingData {
   weddingDate?: string;
   dataEntryMethod: 'manual' | 'upload';
   onboardingCompleted: boolean;
+  userId?: string;
 }
 
 export interface FixedCost {
