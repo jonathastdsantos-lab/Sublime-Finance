@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, DollarSign, Heart, LayoutDashboard, FileText, Building2 } from 'lucide-react';
+import { Sparkles, DollarSign, Heart, LayoutDashboard, FileText, Building2, X } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { OnboardingData } from '../types';
@@ -8,9 +8,10 @@ import { OnboardingData } from '../types';
 interface OnboardingFormProps {
   userId: string;
   onComplete: (data: OnboardingData) => void;
+  onCancel?: () => void;
 }
 
-export default function OnboardingForm({ userId, onComplete }: OnboardingFormProps) {
+export default function OnboardingForm({ userId, onComplete, onCancel }: OnboardingFormProps) {
   const [step, setStep] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -70,8 +71,17 @@ export default function OnboardingForm({ userId, onComplete }: OnboardingFormPro
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass-card p-8 md:p-12 max-w-2xl w-full space-y-8"
+        className="glass-card p-8 md:p-12 max-w-2xl w-full space-y-8 relative"
       >
+        {onCancel && (
+          <button 
+            onClick={onCancel}
+            className="absolute top-6 right-6 p-2 text-zinc-400 hover:text-zinc-600 transition-colors"
+            title="Cancelar e Sair"
+          >
+            <X size={24} />
+          </button>
+        )}
         <div className="text-center space-y-2">
           <div className="w-16 h-16 bg-sublime rounded-2xl flex items-center justify-center mx-auto shadow-xl mb-4">
             <Sparkles className="text-white" size={32} />

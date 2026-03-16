@@ -979,7 +979,7 @@ function DashboardContent() {
   }
 
   if (user && (!onboardingData || !onboardingData.onboardingCompleted) && !isDemoMode) {
-    return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} />;
+    return <OnboardingForm userId={user.uid} onComplete={setOnboardingData} onCancel={handleLogOut} />;
   }
 
   if (userProfile?.status === 'blocked') {
@@ -1009,7 +1009,17 @@ function DashboardContent() {
   if ((!user && !isDemoMode) || (authMode === '2fa_start' || authMode === '2fa_check') && !is2FABypassed) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50 p-4">
-        <div className="glass-card p-8 md:p-12 text-center space-y-6 max-w-md w-full">
+        <div className="glass-card p-8 md:p-12 text-center space-y-6 max-w-md w-full relative">
+          <button 
+            onClick={() => {
+              setIsDemoMode(true);
+              setIs2FABypassed(true);
+            }}
+            className="absolute top-6 right-6 p-2 text-zinc-400 hover:text-zinc-600 transition-colors"
+            title="Fechar e entrar no modo demonstração"
+          >
+            <X size={24} />
+          </button>
           <div className="w-16 h-16 bg-sublime rounded-2xl flex items-center justify-center mx-auto shadow-xl">
             <DollarSign className="text-white" size={32} />
           </div>
