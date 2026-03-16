@@ -806,6 +806,8 @@ function DashboardContent() {
       let message = "Erro ao entrar com Google. Tente novamente.";
       if (error.code === 'auth/operation-not-allowed') {
         message = 'O login com Google não está ativado no seu Console do Firebase. Por favor, ative o provedor "Google" nas configurações de Autenticação.';
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        message = 'A janela de login foi fechada antes da conclusão. Por favor, tente novamente e mantenha a janela aberta.';
       }
       setAuthError(message);
     } finally {
