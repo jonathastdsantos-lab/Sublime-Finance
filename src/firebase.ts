@@ -6,7 +6,8 @@ import {
   signOut,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -19,6 +20,7 @@ export const googleProvider = new GoogleAuthProvider();
 export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
 export const registerWithEmail = (email: string, pass: string) => createUserWithEmailAndPassword(auth, email, pass);
 export const loginWithEmail = (email: string, pass: string) => signInWithEmailAndPassword(auth, email, pass);
+export const resetPassword = (email: string) => sendPasswordResetEmail(auth, email);
 export const logOut = () => signOut(auth);
 export { updateProfile };
 

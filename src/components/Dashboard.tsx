@@ -72,7 +72,7 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
-import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, handleFirestoreError, OperationType } from '../firebase';
+import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, resetPassword, handleFirestoreError, OperationType } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
@@ -982,6 +982,24 @@ function DashboardContent() {
     }
   };
 
+  const [resetEmailSent, setResetEmailSent] = useState(false);
+  const handleResetPassword = async (email: string) => {
+    if (!email) {
+      setAuthError('Por favor, informe seu e-mail para recuperar a senha.');
+      return;
+    }
+    setIsLoadingAuth(true);
+    try {
+      await resetPassword(email);
+      setResetEmailSent(true);
+      setAuthError(null);
+    } catch (error: any) {
+      setAuthError('Erro ao enviar e-mail de recuperação. Verifique o endereço informado.');
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  };
+
   if (isLoadingAuth || isLoadingOnboarding) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-50">
@@ -1066,16 +1084,28 @@ function DashboardContent() {
                     <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs font-medium space-y-2">
                       <p className="whitespace-pre-line">{authError}</p>
                       {authError.includes('já está em uso') && authMode === 'register' && (
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            setAuthMode('login');
-                            setAuthError(null);
-                          }}
-                          className="w-full py-2 bg-white border border-red-200 rounded-lg text-red-700 font-bold hover:bg-red-100 transition-colors"
-                        >
-                          Ir para Login
-                        </button>
+                        <div className="flex flex-col gap-2">
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setAuthMode('login');
+                              setAuthError(null);
+                            }}
+                            className="w-full py-2 bg-white border border-red-200 rounded-lg text-red-700 font-bold hover:bg-red-100 transition-colors"
+                          >
+                            Ir para Login
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              const email = (document.querySelector('input[name="email"]') as HTMLInputElement)?.value;
+                              handleResetPassword(email);
+                            }}
+                            className="w-full py-2 text-[10px] font-bold text-red-500 hover:underline uppercase"
+                          >
+                            Esqueci minha senha
+                          </button>
+                        </div>
                       )}
                     </div>
                     <button 
@@ -1092,6 +1122,12 @@ function DashboardContent() {
                   </div>
                 )}
 
+                {resetEmailSent && (
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-600 text-xs font-medium text-center">
+                    E-mail de recuperação enviado! Verifique sua caixa de entrada.
+                  </div>
+                )}
+
                 <button 
                   type="submit"
                   disabled={isLoadingAuth}
@@ -1099,6 +1135,18 @@ function DashboardContent() {
                 >
                   {isLoadingAuth ? 'Processando...' : authMode === 'login' ? 'Entrar' : 'Criar Conta'}
                 </button>
+                {authMode === 'login' && (
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      const email = (document.querySelector('input[name="email"]') as HTMLInputElement)?.value;
+                      handleResetPassword(email);
+                    }}
+                    className="w-full text-[10px] font-bold text-zinc-400 hover:text-sublime transition-colors uppercase tracking-wider text-center"
+                  >
+                    Esqueci minha senha
+                  </button>
+                )}
               </form>
 
               <div className="relative">
