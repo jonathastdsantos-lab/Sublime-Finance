@@ -173,7 +173,9 @@ function DashboardContent() {
           if (!userDoc.exists()) {
             const userData = {
               name: u.displayName || 'Usuário',
+              displayName: u.displayName || 'Usuário',
               email: u.email || '',
+              photoURL: u.photoURL || '',
               role: isAdminEmail ? 'admin' : 'user',
               status: 'active',
               createdAt: new Date().toISOString(),
@@ -184,6 +186,8 @@ function DashboardContent() {
           } else {
             const updateData: any = {
               lastLogin: new Date().toISOString(),
+              displayName: u.displayName || userDoc.data().displayName || 'Usuário',
+              photoURL: u.photoURL || userDoc.data().photoURL || ''
             };
             // Auto-upgrade to admin if email matches
             if (isAdminEmail && userDoc.data().role !== 'admin') {

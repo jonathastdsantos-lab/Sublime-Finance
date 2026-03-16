@@ -265,13 +265,15 @@ service cloud.firestore {
       // Prevent recursion by only calling isAdmin() if not the owner
       allow read: if isOwner(userId) || (userId != request.auth.uid && isAdmin());
       
-      allow create: if (isOwner(userId) || isAdmin()) && 
-                    isValidUser(request.resource.data) &&
-                    (isMasterAdmin() || isAdmin() || request.resource.data.role == 'user');
+      allow create: if isMasterAdmin() || 
+                    ((isOwner(userId) || isAdmin()) && 
+                     isValidUser(request.resource.data) &&
+                     (isAdmin() || request.resource.data.role == 'user'));
                     
-      allow update: if (isOwner(userId) || isAdmin()) && 
-                    isValidUser(request.resource.data) &&
-                    (isMasterAdmin() || isAdmin() || request.resource.data.role == resource.data.role);
+      allow update: if isMasterAdmin() || 
+                    ((isOwner(userId) || isAdmin()) && 
+                     isValidUser(request.resource.data) &&
+                     (isAdmin() || request.resource.data.role == resource.data.role));
       
       allow delete: if isAdmin();
     }
