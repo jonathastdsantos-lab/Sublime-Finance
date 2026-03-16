@@ -14,9 +14,7 @@ export async function getFinancialAdvice(
   const totalIncome = transactions.filter(t => t.type === 'entrada').reduce((sum, t) => sum + t.amount, 0);
   const totalExpense = transactions.filter(t => t.type === 'saida').reduce((sum, t) => sum + t.amount, 0);
   
-  const response = await genAI.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: [{ parts: [{ text: `
+  const prompt = `
     Você é o Consultor Financeiro IA do ${onboardingData.companyName}.
     
     DADOS FINANCEIROS:
@@ -37,10 +35,18 @@ export async function getFinancialAdvice(
     4. Preveja meses de baixa (ex: Fevereiro no Brasil) e sugira reserva de emergência.
     
     Retorne uma análise detalhada em Markdown, com tom profissional e motivador.
-    ` }] }],
-  });
+  `;
 
-  return response.text;
+  try {
+    const response = await genAI.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts: [{ text: prompt }] }],
+    });
+    return response.text;
+  } catch (error) {
+    console.error("Financial Advice error:", error);
+    return "Desculpe, não consegui gerar seus conselhos financeiros no momento. Por favor, tente novamente em instantes.";
+  }
 }
 
 export async function predictCashFlow(transactions: Transaction[]) {

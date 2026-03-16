@@ -77,32 +77,30 @@ export default function StatementImporter({ onClose, onSuccess }: StatementImpor
         }
 
         Extrato:
-        ${text.substring(0, 10000)} // Limit to 10k chars for safety
+        ${text.substring(0, 6000)}
       `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                description: { type: Type.STRING },
-                amount: { type: Type.NUMBER },
-                type: { type: Type.STRING, enum: ["entrada", "saida"] },
-                category: { type: Type.STRING },
-                date: { type: Type.STRING },
-                payment_method: { type: Type.STRING },
-                notes: { type: Type.STRING }
-              },
-              required: ["description", "amount", "type", "category", "date", "payment_method"]
-            }
+      let response;
+      try {
+        response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [{ parts: [{ text: prompt }] }],
+          config: {
+            responseMimeType: "application/json",
           }
-        }
-      });
+        });
+      } catch (firstErr) {
+        console.warn("First AI attempt failed, retrying...", firstErr);
+        // Small delay before retry
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [{ parts: [{ text: prompt }] }],
+          config: {
+            responseMimeType: "application/json",
+          }
+        });
+      }
 
       let responseText = response.text || '[]';
       // Clean up response text in case AI added markdown blocks
