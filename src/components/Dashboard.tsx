@@ -884,7 +884,7 @@ function DashboardContent() {
       let message = 'Ocorreu um erro ao acessar. Verifique seus dados.';
       
       if (error.code === 'auth/email-already-in-use') {
-        message = 'Este e-mail já está em uso.';
+        message = 'Este e-mail já está em uso. Tente fazer login em vez de criar uma nova conta.';
       } else if (error.code === 'auth/weak-password') {
         message = 'A senha deve ter pelo menos 6 caracteres.';
       } else if (error.code === 'auth/invalid-email') {
@@ -959,10 +959,22 @@ function DashboardContent() {
     } catch (error: any) {
       console.error("Google Auth error:", error);
       let message = "Erro ao entrar com Google. Tente novamente.";
+      
       if (error.code === 'auth/operation-not-allowed') {
         message = 'O login com Google não está ativado no seu Console do Firebase. Por favor, ative o provedor "Google" nas configurações de Autenticação.';
       } else if (error.code === 'auth/popup-closed-by-user') {
         message = 'A janela de login foi fechada antes da conclusão. Por favor, tente novamente e mantenha a janela aberta.';
+      } else if (error.code === 'auth/unauthorized-domain') {
+        const domain = window.location.hostname;
+        message = `Este domínio (${domain}) não está autorizado para login com Google. 
+        
+        Para corrigir:
+        1. Vá no Console do Firebase > Authentication > Settings > Authorized Domains.
+        2. Adicione "${domain}" à lista.`;
+      } else if (error.code === 'auth/account-exists-with-different-credential') {
+        message = 'Já existe uma conta com este e-mail usando um método de login diferente (ex: senha). Tente entrar com seu e-mail e senha.';
+      } else {
+        message = `Erro na autenticação Google: ${error.message || 'Erro desconhecido'}. Código: ${error.code}`;
       }
       setAuthError(message);
     } finally {
@@ -1051,7 +1063,21 @@ function DashboardContent() {
 
                 {authError && (
                   <div className="space-y-3">
-                    <p className="text-xs text-red-500 font-medium bg-red-50 p-2 rounded-lg text-center whitespace-pre-line">{authError}</p>
+                    <div className="p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs font-medium space-y-2">
+                      <p className="whitespace-pre-line">{authError}</p>
+                      {authError.includes('já está em uso') && authMode === 'register' && (
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setAuthMode('login');
+                            setAuthError(null);
+                          }}
+                          className="w-full py-2 bg-white border border-red-200 rounded-lg text-red-700 font-bold hover:bg-red-100 transition-colors"
+                        >
+                          Ir para Login
+                        </button>
+                      )}
+                    </div>
                     <button 
                       type="button"
                       onClick={() => {

@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import twilio from "twilio";
 import sgMail from "@sendgrid/mail";
 import { google } from "googleapis";
+import admin from "firebase-admin";
 
 dotenv.config();
 
@@ -18,12 +19,32 @@ if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 }
 
+// Initialize Firebase Admin (Lazy)
+let firebaseAdmin: admin.app.App | null = null;
+function getFirebaseAdmin() {
+  if (!firebaseAdmin && process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      firebaseAdmin = admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+      console.log("Firebase Admin initialized successfully");
+    } catch (error) {
+      console.error("Error initializing Firebase Admin:", error);
+    }
+  }
+  return firebaseAdmin;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(cors());
   app.use(express.json());
+
+  // Initialize Firebase Admin on start if config exists
+  getFirebaseAdmin();
 
   // --- API ROUTES ---
 

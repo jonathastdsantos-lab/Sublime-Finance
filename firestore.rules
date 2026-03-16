@@ -76,8 +76,8 @@ service cloud.firestore {
       ];
       let validPaymentMethods = ["dinheiro", "pix", "cartao_debito", "cartao_credito", "transferencia", "boleto"];
 
-      return data.description is string && data.description.size() > 0 && data.description.size() < 100 &&
-             data.amount is number && data.amount >= 0 &&
+      return data.description is string && data.description.size() > 0 && data.description.size() < 200 &&
+             data.amount is number &&
              data.type in ['entrada', 'saida'] &&
              data.category in validCategories &&
              data.date is string &&
@@ -88,7 +88,7 @@ service cloud.firestore {
     }
 
     function isValidOnboarding(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() < 50 &&
+      return data.name is string && data.name.size() > 0 &&
              (!('companyName' in data) || data.companyName is string) &&
              (!('photoURL' in data) || data.photoURL is string) &&
              data.primaryColor is string &&
@@ -255,18 +255,16 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      // Prevent recursion by only calling isAdmin() if not the owner
-      allow read: if isOwner(userId) || (userId != request.auth.uid && isAdmin());
+      allow list: if isAdmin();
+      allow get: if isOwner(userId) || isAdmin();
       
       allow create: if isMasterAdmin() || 
-                    ((isOwner(userId) || isAdmin()) && 
-                     isValidUser(request.resource.data) &&
-                     (isAdmin() || request.resource.data.role == 'user'));
+                    (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user') ||
+                    (isAdmin() && isValidUser(request.resource.data));
                     
       allow update: if isMasterAdmin() || 
-                    ((isOwner(userId) || isAdmin()) && 
-                     isValidUser(request.resource.data) &&
-                     (isAdmin() || request.resource.data.role == resource.data.role));
+                    (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role) ||
+                    (isAdmin() && isValidUser(request.resource.data));
       
       allow delete: if isAdmin();
     }
