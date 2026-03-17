@@ -512,7 +512,9 @@ function DashboardContent() {
     .filter(t => t.type === 'saida')
     .reduce((sum, t) => sum + t.amount, 0);
 
-  const totalBankBalance = bankAccounts.reduce((sum, acc) => sum + acc.balance, 0);
+  const totalBankBalance = transactions.reduce((sum, t) => {
+    return t.type === 'entrada' ? sum + t.amount : sum - t.amount;
+  }, 0);
 
   const progress = Math.min((totalIncome / goal) * 100, 100);
 
@@ -1641,135 +1643,238 @@ function DashboardContent() {
 
         {activeView === 'dashboard' && (
           <div className="space-y-8">
-            {/* Alerts Row */}
+            {/* Financial Overview Row */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`p-4 rounded-2xl flex items-center gap-4 border ${
-                  daysToDAS <= 5 ? 'bg-red-50 border-red-100 text-red-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'
-                }`}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="glass-card p-5 bg-white border-zinc-100 flex flex-col justify-between"
               >
-                <div className={`p-3 rounded-xl ${daysToDAS <= 5 ? 'bg-red-100' : 'bg-emerald-100'}`}>
-                  <Calendar size={24} />
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                    <Building2 size={20} />
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Saldo em Conta</span>
                 </div>
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider opacity-60">Obrigação MEI</p>
-                  <p className="text-lg font-bold">
-                    {daysToDAS < 0 ? 'DAS Vencido!' : daysToDAS === 0 ? 'Vence Hoje!' : `Vence em ${daysToDAS} dias`}
-                  </p>
+                  <h3 className="text-2xl font-bold text-zinc-900">
+                    R$ {totalBankBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </h3>
+                  <p className="text-[10px] text-zinc-400 mt-1">Soma de todas as contas conectadas</p>
                 </div>
               </motion.div>
 
               <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="p-4 rounded-2xl flex items-center gap-4 border bg-orange-50 border-orange-100 text-orange-700"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.05 }}
+                className="glass-card p-5 bg-white border-zinc-100 flex flex-col justify-between"
               >
-                <div className="p-3 rounded-xl bg-orange-100">
-                  <DollarSign size={24} />
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                    <ArrowUpRight size={20} />
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Entradas (Mês)</span>
                 </div>
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider opacity-60">Próximos Custos</p>
-                  <p className="text-lg font-bold">
+                  <h3 className="text-2xl font-bold text-emerald-600">
+                    + R$ {totalIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </h3>
+                  <p className="text-[10px] text-zinc-400 mt-1">Total recebido este mês</p>
+                </div>
+              </motion.div>
+
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.1 }}
+                className="glass-card p-5 bg-white border-zinc-100 flex flex-col justify-between"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-2 bg-red-50 text-red-600 rounded-xl">
+                    <ArrowDownRight size={20} />
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Saídas (Mês)</span>
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold text-red-600">
+                    - R$ {totalExpense.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </h3>
+                  <p className="text-[10px] text-zinc-400 mt-1">Total gasto este mês</p>
+                </div>
+              </motion.div>
+
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.15 }}
+                className="glass-card p-5 bg-white border-zinc-100 flex flex-col justify-between"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className={`p-2 rounded-xl ${(totalIncome - totalExpense) >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                    <TrendingUp size={20} />
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Resultado Líquido</span>
+                </div>
+                <div>
+                  <h3 className={`text-2xl font-bold ${(totalIncome - totalExpense) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    R$ {(totalIncome - totalExpense).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </h3>
+                  <p className="text-[10px] text-zinc-400 mt-1">Lucro/Prejuízo operacional</p>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* Alerts & Goals Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 glass-card p-6 space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-zinc-100 text-zinc-500 rounded-lg">
+                      <Target size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg">Meta de Faturamento</h3>
+                      <p className="text-xs text-zinc-400">Acompanhamento do objetivo mensal</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-zinc-900">R$ {goal.toLocaleString()}</span>
+                    <p className="text-[10px] text-zinc-400 font-bold uppercase">Objetivo</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="relative h-6 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progress}%` }}
+                      className="h-full bg-gradient-to-r from-sublime to-sublime/80 relative"
+                    >
+                      {progress > 15 && (
+                        <span className="absolute inset-0 flex items-center justify-end pr-3 text-[10px] font-bold text-white">
+                          {progress.toFixed(1)}%
+                        </span>
+                      )}
+                    </motion.div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-sublime" />
+                      <span className="text-xs font-bold text-zinc-600">R$ {totalIncome.toLocaleString()} atingidos</span>
+                    </div>
+                    <span className="text-xs font-bold text-zinc-400">
+                      Faltam R$ {(goal - totalIncome).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass-card p-6 bg-sublime text-white relative overflow-hidden flex flex-col justify-between">
+                <Sparkles className="absolute -top-6 -right-6 text-white/10 w-32 h-32 rotate-12" />
+                <div className="relative z-10 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-white/20 rounded-lg">
+                      <Sparkles size={16} className="text-white" />
+                    </div>
+                    <h3 className="font-bold">IA Insight</h3>
+                  </div>
+                  <div className="space-y-3">
+                    {isLoadingAI ? (
+                      <div className="space-y-2 animate-pulse">
+                        <div className="h-2 bg-white/20 rounded w-full" />
+                        <div className="h-2 bg-white/20 rounded w-3/4" />
+                        <div className="h-2 bg-white/20 rounded w-5/6" />
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {onboardingData && (
+                          <p className="text-xs text-white/90 leading-relaxed font-medium">
+                            {onboardingData?.weddingGoalAmount 
+                          ? `${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% antecipa o casamento em 3 meses!`
+                          : `${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% acelerará o crescimento do seu Studio!`}
+                          </p>
+                        )}
+                        {aiInsights.slice(0, 1).map((ins, i) => (
+                          <p key={i} className="text-xs text-white/80 leading-relaxed italic">"{ins}"</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setActiveView('ai')}
+                  className="relative z-10 mt-4 w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
+                >
+                  Ver Análise Completa
+                </button>
+              </div>
+            </div>
+
+            {/* Secondary Alerts Row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`p-4 rounded-2xl flex items-center gap-3 border ${
+                  daysToDAS <= 5 ? 'bg-red-50 border-red-100 text-red-700' : 'bg-zinc-50 border-zinc-100 text-zinc-600'
+                }`}
+              >
+                <div className={`p-2 rounded-xl ${daysToDAS <= 5 ? 'bg-red-100' : 'bg-zinc-100'}`}>
+                  <Calendar size={18} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider opacity-60">Guia DAS MEI</p>
+                  <p className="text-sm font-bold">
+                    {daysToDAS < 0 ? 'Vencido!' : daysToDAS === 0 ? 'Vence Hoje!' : `Vence em ${daysToDAS} dias`}
+                  </p>
+                </div>
+                <button onClick={() => setActiveView('mei')} className="p-1.5 hover:bg-black/5 rounded-lg">
+                  <ChevronRight size={16} />
+                </button>
+              </motion.div>
+
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.05 }}
+                className="p-4 rounded-2xl flex items-center gap-3 border bg-zinc-50 border-zinc-100 text-zinc-600"
+              >
+                <div className="p-2 rounded-xl bg-zinc-100">
+                  <DollarSign size={18} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider opacity-60">Custos Fixos</p>
+                  <p className="text-sm font-bold">
                     {fixedCosts.filter(fc => fc.due_day >= new Date().getDate()).length} pendentes
                   </p>
                 </div>
-              </motion.div>
-
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-                className="p-4 rounded-2xl flex items-center gap-4 border bg-blue-50 border-blue-100 text-blue-700"
-              >
-                <div className="p-3 rounded-xl bg-blue-100">
-                  <Building2 size={24} />
-                </div>
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wider opacity-60">Saldo Bancário</p>
-                  <p className="text-lg font-bold">
-                    R$ {totalBankBalance.toLocaleString()}
-                  </p>
-                </div>
+                <button onClick={() => setActiveView('fixed_costs')} className="p-1.5 hover:bg-black/5 rounded-lg">
+                  <ChevronRight size={16} />
+                </button>
               </motion.div>
 
               {onboardingData?.weddingGoalAmount && (
                 <motion.div 
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="p-4 rounded-2xl flex items-center gap-4 border bg-pink-50 border-pink-100 text-pink-700"
+                  transition={{ delay: 0.1 }}
+                  className="p-4 rounded-2xl flex items-center gap-3 border bg-pink-50 border-pink-100 text-pink-700"
                 >
-                  <div className="p-3 rounded-xl bg-pink-100">
-                    <Heart size={24} />
+                  <div className="p-2 rounded-xl bg-pink-100">
+                    <Heart size={18} />
                   </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider opacity-60">O Sonho: Casamento</p>
-                    <p className="text-lg font-bold">
+                  <div className="flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider opacity-60">Sonho: Casamento</p>
+                    <p className="text-sm font-bold">
                       {monthsRemaining} meses • R$ {monthlyAporte.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/mês
                     </p>
                   </div>
+                  <button onClick={() => setActiveView('goals')} className="p-1.5 hover:bg-black/5 rounded-lg">
+                    <ChevronRight size={16} />
+                  </button>
                 </motion.div>
               )}
-            </div>
-
-            {/* Main Stats */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 glass-card p-6 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Target className="text-zinc-400" />
-                    <h3 className="font-bold text-lg">Meta de Faturamento</h3>
-                  </div>
-                  <span className="text-sm font-bold text-zinc-500">R$ {goal.toLocaleString()}</span>
-                </div>
-                <div className="space-y-2">
-                  <div className="h-4 bg-zinc-100 rounded-full overflow-hidden border border-zinc-200">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${progress}%` }}
-                      className="h-full bg-sublime"
-                    />
-                  </div>
-                  <div className="flex justify-between text-xs font-bold text-zinc-400">
-                    <span>{progress.toFixed(1)}% atingido</span>
-                    <span>Faltam R$ {(goal - totalIncome).toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="glass-card p-6 bg-sublime text-white relative overflow-hidden">
-                <Sparkles className="absolute -top-6 -right-6 text-white/5 w-32 h-32" />
-                <div className="relative z-10 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={18} className="text-white/80" />
-                    <h3 className="font-bold">IA Insight</h3>
-                  </div>
-                  <div className="space-y-2">
-                    {isLoadingAI ? (
-                      <div className="space-y-2 animate-pulse">
-                        <div className="h-3 bg-white/10 rounded w-full" />
-                        <div className="h-3 bg-white/10 rounded w-3/4" />
-                      </div>
-                    ) : (
-                      <>
-                        {onboardingData && (
-                          <p className="text-xs text-white/90 leading-relaxed">
-                            {onboardingData?.weddingGoalAmount 
-                          ? `• ${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% antecipa o casamento em 3 meses!`
-                          : `• ${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% acelerará o crescimento do seu Studio!`}
-                          </p>
-                        )}
-                        {aiInsights.slice(0, 1).map((ins, i) => (
-                          <p key={i} className="text-xs text-white/90 leading-relaxed">• {ins}</p>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Charts Row */}
