@@ -48,7 +48,8 @@ import {
   BarChart as BarChartIcon,
   Users,
   Percent,
-  CalendarCheck
+  CalendarCheck,
+  Euro
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -224,6 +225,7 @@ function DashboardContent() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterType, setFilterType] = useState('all');
+  const [filterPaymentMethod, setFilterPaymentMethod] = useState('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -235,6 +237,24 @@ function DashboardContent() {
     const saved = localStorage.getItem('google_calendar_tokens');
     return saved ? JSON.parse(saved) : null;
   });
+
+  const [exchangeRates, setExchangeRates] = useState<{ USD: number | null, EUR: number | null }>({ USD: null, EUR: null });
+
+  useEffect(() => {
+    const fetchRates = async () => {
+      try {
+        const response = await fetch('https://economia.awesomeapi.com.br/last/USD-BRL,EUR-BRL');
+        const data = await response.json();
+        setExchangeRates({
+          USD: parseFloat(data.USDBRL.bid),
+          EUR: parseFloat(data.EURBRL.bid)
+        });
+      } catch (error) {
+        console.error('Failed to fetch exchange rates:', error);
+      }
+    };
+    fetchRates();
+  }, []);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -615,12 +635,13 @@ function DashboardContent() {
     const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = filterCategory === 'all' || t.category === filterCategory;
     const matchesType = filterType === 'all' || t.type === filterType;
+    const matchesPaymentMethod = filterPaymentMethod === 'all' || t.payment_method === filterPaymentMethod;
     
     const transactionDate = new Date(t.date);
     const matchesStartDate = !startDate || transactionDate >= new Date(startDate);
     const matchesEndDate = !endDate || transactionDate <= new Date(endDate + 'T23:59:59');
     
-    return matchesSearch && matchesCategory && matchesType && matchesStartDate && matchesEndDate;
+    return matchesSearch && matchesCategory && matchesType && matchesPaymentMethod && matchesStartDate && matchesEndDate;
   });
 
   // Pie Chart Data
@@ -2702,7 +2723,7 @@ function DashboardContent() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-zinc-100 pt-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-zinc-100 pt-4">
                 <div className="flex items-center gap-2">
                   <label className="text-[10px] font-bold uppercase text-zinc-400 whitespace-nowrap">Início:</label>
                   <input 
@@ -2720,6 +2741,21 @@ function DashboardContent() {
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
                   />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] font-bold uppercase text-zinc-400 whitespace-nowrap">Método:</label>
+                  <select 
+                    className="flex-1 px-4 py-2 rounded-xl border border-zinc-100 bg-zinc-50 text-sm"
+                    value={filterPaymentMethod}
+                    onChange={(e) => setFilterPaymentMethod(e.target.value)}
+                  >
+                    <option value="all">Todos os Métodos</option>
+                    <option value="pix">PIX</option>
+                    <option value="credit">Cartão de Crédito</option>
+                    <option value="debit">Cartão de Débito</option>
+                    <option value="cash">Dinheiro</option>
+                    <option value="transfer">Transferência</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -2840,6 +2876,37 @@ function DashboardContent() {
               <div className="flex items-center gap-2 text-sm text-zinc-500">
                 <TrendingUp size={16} />
                 <span>Planejamento Financeiro</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="glass-card p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-500/10 text-green-500 rounded-lg">
+                    <DollarSign size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm">Dólar (USD)</h3>
+                    <p className="text-xs text-zinc-500">Cotação Atual</p>
+                  </div>
+                </div>
+                <div className="text-lg font-bold">
+                  {exchangeRates.USD ? `R$ ${exchangeRates.USD.toFixed(2)}` : 'Carregando...'}
+                </div>
+              </div>
+              <div className="glass-card p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-500/10 text-blue-500 rounded-lg">
+                    <Euro size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm">Euro (EUR)</h3>
+                    <p className="text-xs text-zinc-500">Cotação Atual</p>
+                  </div>
+                </div>
+                <div className="text-lg font-bold">
+                  {exchangeRates.EUR ? `R$ ${exchangeRates.EUR.toFixed(2)}` : 'Carregando...'}
+                </div>
               </div>
             </div>
 
