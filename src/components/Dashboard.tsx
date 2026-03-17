@@ -57,7 +57,9 @@ import {
   ResponsiveContainer,
   Cell,
   PieChart,
-  Pie
+  Pie,
+  AreaChart,
+  Area
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInDays, parseISO, startOfMonth, endOfMonth } from 'date-fns';
@@ -80,7 +82,7 @@ import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, 
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig, Partner, Commission, Appointment } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
-import { getFinancialAdvice, predictCashFlow, getAIInsights } from '../services/aiService';
+import { getFinancialAdvice, predictCashFlow, askAgis, getOnboardingQuizPlan, getAIInsights, getRiskAlert } from '../services/aiService';
 import Markdown from 'react-markdown';
 import OnboardingForm from './OnboardingForm';
 import ErrorBoundary from './ErrorBoundary';
@@ -88,7 +90,7 @@ import AdminPanel from './AdminPanel';
 import OnboardingGuide from './OnboardingGuide';
 import BlockedScreen from './BlockedScreen';
 
-type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin' | 'partners' | 'commissions' | 'appointments';
+type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin' | 'partners' | 'commissions' | 'appointments' | 'growth_plan';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
@@ -137,11 +139,56 @@ function DashboardContent() {
   const [isAddingFixedCost, setIsAddingFixedCost] = useState(false);
   const [isAddingMei, setIsAddingMei] = useState(false);
   const [isAddingGoal, setIsAddingGoal] = useState(false);
+  const [selectedGoalCategory, setSelectedGoalCategory] = useState<string>('outro');
+  const [prefilledGoal, setPrefilledGoal] = useState<{ name: string; category: string } | null>(null);
+
+  useEffect(() => {
+    if (isAddingGoal) {
+      setSelectedGoalCategory(prefilledGoal?.category || 'outro');
+    }
+  }, [isAddingGoal, prefilledGoal]);
   const [isAddingPartner, setIsAddingPartner] = useState(false);
   const [isAddingCommission, setIsAddingCommission] = useState(false);
   const [isAddingAppointment, setIsAddingAppointment] = useState(false);
   const [isShowingBankGuide, setIsShowingBankGuide] = useState(false);
   const [isShowingOnboardingGuide, setIsShowingOnboardingGuide] = useState(false);
+
+  // Investment Calculator State
+  const [calcInitial, setCalcInitial] = useState<number>(1000);
+  const [calcMonthly, setCalcMonthly] = useState<number>(200);
+  const [calcRate, setCalcRate] = useState<number>(12);
+  const [calcPeriod, setCalcPeriod] = useState<number>(12);
+  const [calcResult, setCalcResult] = useState<any>(null);
+
+  const calculateInvestment = () => {
+    const monthlyRate = Math.pow(1 + calcRate / 100, 1 / 12) - 1;
+    let total = calcInitial;
+    const data = [];
+
+    for (let i = 0; i <= calcPeriod; i++) {
+      if (i > 0) {
+        total = total * (1 + monthlyRate) + calcMonthly;
+      }
+      data.push({
+        month: i,
+        total: Number(total.toFixed(2)),
+        invested: calcInitial + (calcMonthly * i)
+      });
+    }
+
+    setCalcResult({
+      total: total,
+      totalInvested: calcInitial + (calcMonthly * calcPeriod),
+      totalInterest: total - (calcInitial + (calcMonthly * calcPeriod)),
+      chartData: data
+    });
+  };
+
+  useEffect(() => {
+    if (activeView === 'investments') {
+      calculateInvestment();
+    }
+  }, [activeView, calcInitial, calcMonthly, calcRate, calcPeriod]);
 
   useEffect(() => {
     if (onboardingData?.primaryColor) {
@@ -153,7 +200,19 @@ function DashboardContent() {
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   const [aiAdvice, setAiAdvice] = useState<string>('');
   const [cashFlowPrediction, setCashFlowPrediction] = useState<any>(null);
+  const [aiRiskAlert, setAiRiskAlert] = useState<{ alert: string; actions: string[]; severity: string } | null>(null);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
+  
+  // Agis Chat State
+  const [agisMessages, setAgisMessages] = useState<{ role: 'user' | 'agis', text: string }[]>([]);
+  const [agisInput, setAgisInput] = useState('');
+  const [isAgisTyping, setIsAgisTyping] = useState(false);
+
+  // Onboarding Quiz State
+  const [isShowingQuiz, setIsShowingQuiz] = useState(false);
+  const [quizStep, setQuizStep] = useState(0);
+  const [quizAnswers, setQuizAnswers] = useState<any>({});
+  const [quizPlan, setQuizPlan] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
@@ -477,8 +536,12 @@ function DashboardContent() {
       setIsLoadingAI(true);
       try {
         // Legacy insights for dashboard
-        const insights = await getAIInsights(transactions, goal, totalIncome, onboardingData?.companyName);
+        const insights = await getAIInsights(transactions);
         setAiInsights(insights);
+
+        // Risk Alert Analysis
+        const risk = await getRiskAlert(transactions, fixedCosts, totalIncome, totalExpense);
+        setAiRiskAlert(risk);
 
         // Advanced advice
         if (onboardingData) {
@@ -710,17 +773,22 @@ function DashboardContent() {
     e.preventDefault();
     if (!user) return;
     const formData = new FormData(e.currentTarget);
+    const category = formData.get('category') === 'outro' 
+      ? formData.get('custom_category') 
+      : formData.get('category');
+
     try {
       await addDoc(collection(db, 'goals'), {
         name: formData.get('name'),
         target_amount: Number(formData.get('target_amount')),
         current_amount: Number(formData.get('current_amount')) || 0,
         target_date: formData.get('target_date'),
-        category: formData.get('category') || 'outro',
+        category: category || 'Outro',
         notes: formData.get('notes'),
         userId: user.uid
       });
       setIsAddingGoal(false);
+      setSelectedGoalCategory('outro');
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'goals');
     }
@@ -953,6 +1021,65 @@ function DashboardContent() {
       handleFirestoreError(error, OperationType.DELETE, `bank_accounts/${accountId}`);
     }
   };
+
+  const handleAgisChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agisInput.trim() || !user) return;
+
+    const userMessage = agisInput;
+    setAgisInput('');
+    setAgisMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    setIsAgisTyping(true);
+
+    try {
+      const response = await askAgis(userMessage, {
+        transactions,
+        partners,
+        appointments,
+        fixedCosts,
+        onboardingData: onboardingData!
+      });
+      setAgisMessages(prev => [...prev, { role: 'agis', text: response || 'Desculpe, tive um problema ao processar sua pergunta.' }]);
+    } catch (error) {
+      console.error('Agis Chat Error:', error);
+      setAgisMessages(prev => [...prev, { role: 'agis', text: 'Erro ao conectar com Agis.' }]);
+    } finally {
+      setIsAgisTyping(false);
+    }
+  };
+
+  const startQuiz = () => {
+    setIsShowingQuiz(true);
+    setQuizStep(0);
+    setQuizAnswers({});
+    setQuizPlan(null);
+  };
+
+  const handleQuizAnswer = async (answer: any) => {
+    const newAnswers = { ...quizAnswers, [quizStep]: answer };
+    setQuizAnswers(newAnswers);
+
+    if (quizStep < 4) {
+      setQuizStep(prev => prev + 1);
+    } else {
+      setIsLoadingAI(true);
+      try {
+        const plan = await getOnboardingQuizPlan(newAnswers);
+        setQuizPlan(plan);
+      } catch (error) {
+        console.error('Quiz Plan Error:', error);
+      } finally {
+        setIsLoadingAI(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (onboardingData?.onboardingCompleted && !localStorage.getItem(`quiz_shown_${user?.uid}`)) {
+      startQuiz();
+      localStorage.setItem(`quiz_shown_${user?.uid}`, 'true');
+    }
+  }, [onboardingData?.onboardingCompleted, user?.uid]);
 
   const updatePrimaryColor = async (color: string) => {
     if (!user) return;
@@ -1473,6 +1600,7 @@ function DashboardContent() {
           <NavItem view="mei" icon={FileText} label="MEI" />
           <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
           <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
+          <NavItem view="growth_plan" icon={ArrowUpRight} label="Plano de Crescimento" />
           <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
           <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
           {userProfile?.role === 'admin' && (
@@ -1553,6 +1681,7 @@ function DashboardContent() {
                 <NavItem view="mei" icon={FileText} label="MEI" />
                 <NavItem view="goals" icon={Heart} label="Metas & Sonhos" />
                 <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
+                <NavItem view="growth_plan" icon={ArrowUpRight} label="Plano de Crescimento" />
                 <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
                 <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
                 {userProfile?.role === 'admin' && (
@@ -1622,23 +1751,25 @@ function DashboardContent() {
               </h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setIsImportingStatement(true)}
-              className="bg-zinc-100 text-zinc-600 p-2.5 rounded-xl hover:bg-zinc-200 transition-all md:px-4 md:flex md:items-center md:gap-2"
-              title="Importar Extrato"
-            >
-              <FileText size={20} />
-              <span className="hidden md:inline font-bold">Importar</span>
-            </button>
-            <button 
-              onClick={() => setIsAddingTransaction(true)}
-              className="bg-sublime text-white p-2.5 rounded-xl shadow-lg shadow-sublime/20 md:px-4 md:flex md:items-center md:gap-2"
-            >
-              <Plus size={20} />
-              <span className="hidden md:inline font-bold">Novo</span>
-            </button>
-          </div>
+          {activeView === 'transactions' && (
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setIsImportingStatement(true)}
+                className="bg-zinc-100 text-zinc-600 p-2.5 rounded-xl hover:bg-zinc-200 transition-all md:px-4 md:flex md:items-center md:gap-2"
+                title="Importar Extrato"
+              >
+                <FileText size={20} />
+                <span className="hidden md:inline font-bold">Importar</span>
+              </button>
+              <button 
+                onClick={() => setIsAddingTransaction(true)}
+                className="bg-sublime text-white p-2.5 rounded-xl shadow-lg shadow-sublime/20 md:px-4 md:flex md:items-center md:gap-2"
+              >
+                <Plus size={20} />
+                <span className="hidden md:inline font-bold">Novo</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {activeView === 'dashboard' && (
@@ -1770,33 +1901,33 @@ function DashboardContent() {
                 </div>
               </div>
 
-              <div className="glass-card p-6 bg-sublime text-white relative overflow-hidden flex flex-col justify-between">
-                <Sparkles className="absolute -top-6 -right-6 text-white/10 w-32 h-32 rotate-12" />
+              <div className="glass-card p-6 bg-[#f8f8f8] text-black relative overflow-hidden flex flex-col justify-between border border-zinc-100">
+                <Sparkles className="absolute -top-6 -right-6 text-[#d7d7d7] w-32 h-32 rotate-12" />
                 <div className="relative z-10 space-y-4">
                   <div className="flex items-center gap-2">
-                    <div className="p-1.5 bg-white/20 rounded-lg">
-                      <Sparkles size={16} className="text-white" />
+                    <div className="p-1.5 bg-[#ededed] rounded-lg">
+                      <Sparkles size={16} className="text-black" />
                     </div>
-                    <h3 className="font-bold">IA Insight</h3>
+                    <h3 className="font-bold text-black">IA Insight</h3>
                   </div>
                   <div className="space-y-3">
                     {isLoadingAI ? (
                       <div className="space-y-2 animate-pulse">
-                        <div className="h-2 bg-white/20 rounded w-full" />
-                        <div className="h-2 bg-white/20 rounded w-3/4" />
-                        <div className="h-2 bg-white/20 rounded w-5/6" />
+                        <div className="h-2 bg-black/10 rounded w-full" />
+                        <div className="h-2 bg-black/10 rounded w-3/4" />
+                        <div className="h-2 bg-black/10 rounded w-5/6" />
                       </div>
                     ) : (
                       <div className="space-y-3">
                         {onboardingData && (
-                          <p className="text-xs text-white/90 leading-relaxed font-medium">
+                          <p className="text-xs text-black leading-relaxed font-medium">
                             {onboardingData?.weddingGoalAmount 
                           ? `${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% antecipa o casamento em 3 meses!`
                           : `${onboardingData.name}, aumentar as vendas de '${onboardingData.mainService}' em 10% acelerará o crescimento do seu Studio!`}
                           </p>
                         )}
                         {aiInsights.slice(0, 1).map((ins, i) => (
-                          <p key={i} className="text-xs text-white/80 leading-relaxed italic">"{ins}"</p>
+                          <p key={i} className="text-xs text-black leading-relaxed italic">"{ins}"</p>
                         ))}
                       </div>
                     )}
@@ -1804,12 +1935,46 @@ function DashboardContent() {
                 </div>
                 <button 
                   onClick={() => setActiveView('ai')}
-                  className="relative z-10 mt-4 w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all"
+                  className="relative z-10 mt-4 w-full py-2 bg-[#e8d7d7] hover:bg-[#decaca] rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all text-black"
                 >
                   Ver Análise Completa
                 </button>
               </div>
             </div>
+
+            {/* AI Risk Alert */}
+            {aiRiskAlert && (
+              <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-6 rounded-3xl bg-red-50 border border-red-100 space-y-4"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="p-3 bg-red-100 text-red-600 rounded-2xl">
+                    <AlertTriangle size={24} />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg font-bold text-red-900 mb-1">Alerta de Risco Financeiro</h3>
+                    <p className="text-sm text-red-700 leading-relaxed">{aiRiskAlert.alert}</p>
+                  </div>
+                  <button 
+                    onClick={() => setAiRiskAlert(null)}
+                    className="p-2 hover:bg-red-200/50 rounded-full transition-colors"
+                  >
+                    <X size={18} className="text-red-400" />
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {aiRiskAlert.actions.map((action, i) => (
+                    <div key={i} className="flex items-center gap-2 p-3 bg-white/50 rounded-xl border border-red-100/50">
+                      <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                      <span className="text-[11px] font-bold text-red-800">{action}</span>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
 
             {/* Secondary Alerts Row */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2586,22 +2751,203 @@ function DashboardContent() {
 
         {activeView === 'investments' && (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold">Investimentos</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {!isFeatureBlocked('investments', 'calculator') && (
-                <div className="glass-card p-6">
-                  <Calculator size={24} className="text-sublime mb-4" />
-                  <h3 className="font-bold mb-2">Calculadora de Rentabilidade</h3>
-                  <p className="text-sm text-zinc-500">Simule o crescimento do seu capital.</p>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Investimentos</h2>
+              <div className="flex items-center gap-2 text-sm text-zinc-500">
+                <TrendingUp size={16} />
+                <span>Planejamento Financeiro</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Calculator Section */}
+              <div className="lg:col-span-2 space-y-6">
+                {!isFeatureBlocked('investments', 'calculator') && (
+                  <div className="glass-card p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="p-2 bg-sublime/10 rounded-lg">
+                        <Calculator size={20} className="text-sublime" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold">Calculadora de Rentabilidade</h3>
+                        <p className="text-xs text-zinc-500">Simule o crescimento do seu capital com juros compostos</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-xs font-medium text-zinc-500 mb-1 block">Investimento Inicial (R$)</label>
+                          <input
+                            type="number"
+                            value={calcInitial}
+                            onChange={(e) => setCalcInitial(Number(e.target.value))}
+                            className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sublime transition-colors"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-zinc-500 mb-1 block">Aporte Mensal (R$)</label>
+                          <input
+                            type="number"
+                            value={calcMonthly}
+                            onChange={(e) => setCalcMonthly(Number(e.target.value))}
+                            className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sublime transition-colors"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-xs font-medium text-zinc-500 mb-1 block">Taxa Anual (%)</label>
+                            <input
+                              type="number"
+                              value={calcRate}
+                              onChange={(e) => setCalcRate(Number(e.target.value))}
+                              className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sublime transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-zinc-500 mb-1 block">Período (Meses)</label>
+                            <input
+                              type="number"
+                              value={calcPeriod}
+                              onChange={(e) => setCalcPeriod(Number(e.target.value))}
+                              className="w-full bg-zinc-900/50 border border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sublime transition-colors"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {calcResult && (
+                        <div className="bg-zinc-900/30 rounded-xl p-4 border border-zinc-800/50 flex flex-col justify-between">
+                          <div className="space-y-4">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Valor Final Total</p>
+                              <p className="text-2xl font-bold text-sublime">
+                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult.total)}
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Total Investido</p>
+                                <p className="text-sm font-semibold text-zinc-300">
+                                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult.totalInvested)}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Total em Juros</p>
+                                <p className="text-sm font-semibold text-emerald-500">
+                                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult.totalInterest)}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-4 pt-4 border-t border-zinc-800">
+                            <p className="text-[10px] text-zinc-500 italic">
+                              * Simulação baseada em juros compostos mensais.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {calcResult && (
+                      <div className="h-[200px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={calcResult.chartData}>
+                            <defs>
+                              <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#D4AF37" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#D4AF37" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                            <XAxis 
+                              dataKey="month" 
+                              stroke="#666" 
+                              fontSize={10}
+                              tickFormatter={(value) => `${value}m`}
+                            />
+                            <YAxis 
+                              stroke="#666" 
+                              fontSize={10}
+                              tickFormatter={(value) => `R$${value >= 1000 ? (value/1000).toFixed(1) + 'k' : value}`}
+                            />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '8px' }}
+                              itemStyle={{ fontSize: '12px' }}
+                              formatter={(value: number) => [new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value), '']}
+                            />
+                            <Area type="monotone" dataKey="total" stroke="#D4AF37" fillOpacity={1} fill="url(#colorTotal)" name="Total Acumulado" />
+                            <Area type="monotone" dataKey="invested" stroke="#666" fill="transparent" name="Capital Investido" strokeDasharray="5 5" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Investment Options Section */}
+              <div className="space-y-6">
+                {!isFeatureBlocked('investments', 'options') && (
+                  <div className="glass-card p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="p-2 bg-emerald-500/10 rounded-lg">
+                        <TrendingUp size={20} className="text-emerald-500" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold">Opções Sugeridas</h3>
+                        <p className="text-xs text-zinc-500">Baseado no seu perfil de Studio</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      {INITIAL_INVESTMENTS.map((option, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-colors group"
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <h4 className="text-sm font-bold text-zinc-200">{option.objective}</h4>
+                            <div className="p-1 bg-emerald-500/10 rounded group-hover:bg-emerald-500/20 transition-colors">
+                              <ArrowUpRight size={14} className="text-emerald-500" />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-zinc-500 uppercase">Onde:</span>
+                              <span className="text-xs text-emerald-400 font-medium">{option.where}</span>
+                            </div>
+                            <p className="text-[11px] text-zinc-500 leading-relaxed">
+                              {option.why}
+                            </p>
+                          </div>
+                        </motion.div>
+                      ))}
+
+                      <button className="w-full py-3 rounded-xl border border-dashed border-zinc-800 text-zinc-500 text-xs font-medium hover:bg-zinc-900/50 hover:border-zinc-700 transition-all flex items-center justify-center gap-2 mt-4">
+                        <Plus size={14} />
+                        Adicionar Objetivo Personalizado
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Educational Tip */}
+                <div className="bg-sublime/5 border border-sublime/20 rounded-2xl p-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2 bg-sublime/10 rounded-lg">
+                      <Target size={20} className="text-sublime" />
+                    </div>
+                    <h4 className="font-bold text-sm">Dica de Especialista</h4>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    "A constância nos aportes é mais importante que o valor inicial. Comece com o que pode hoje e aumente conforme o Studio cresce."
+                  </p>
                 </div>
-              )}
-              {!isFeatureBlocked('investments', 'options') && (
-                <div className="glass-card p-6">
-                  <TrendingUp size={24} className="text-emerald-500 mb-4" />
-                  <h3 className="font-bold mb-2">Opções de Investimento</h3>
-                  <p className="text-sm text-zinc-500">Conheça as melhores opções para o seu perfil.</p>
-                </div>
-              )}
+              </div>
             </div>
           </div>
         )}
@@ -2610,8 +2956,8 @@ function DashboardContent() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-zinc-900 font-display">IA Consultora</h2>
-                <p className="text-sm text-zinc-500">Sua inteligência financeira personalizada.</p>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Agis - Consultora IA</h2>
+                <p className="text-sm text-zinc-500">Sua inteligência financeira e suporte especializado.</p>
               </div>
               <button 
                 onClick={() => window.location.reload()} 
@@ -2624,9 +2970,94 @@ function DashboardContent() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
+                {/* Agis Chat Interface */}
+                <div className="glass-card flex flex-col h-[600px]">
+                  <div className="p-4 border-b border-zinc-100 flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-sublime/10 flex items-center justify-center text-sublime">
+                      <Sparkles size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm">Conversar com Agis</h3>
+                      <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Online</p>
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/30">
+                    {agisMessages.length === 0 && (
+                      <div className="text-center py-12 space-y-4">
+                        <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center mx-auto text-zinc-400">
+                          <HelpCircle size={32} />
+                        </div>
+                        <div className="max-w-xs mx-auto">
+                          <p className="text-sm font-bold text-zinc-900">Como posso te ajudar hoje?</p>
+                          <p className="text-xs text-zinc-500 mt-1">Pergunte sobre contratações, investimentos ou análise de gastos.</p>
+                        </div>
+                        <div className="flex flex-wrap justify-center gap-2 mt-4">
+                          {['Posso contratar mais uma manicure?', 'Onde investir meu lucro extra?', 'Qual meu risco financeiro atual?'].map((suggestion, i) => (
+                            <button 
+                              key={i}
+                              onClick={() => {
+                                setAgisInput(suggestion);
+                              }}
+                              className="text-[10px] bg-white border border-zinc-200 px-3 py-1.5 rounded-full hover:border-sublime hover:text-sublime transition-all"
+                            >
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {agisMessages.map((msg, i) => (
+                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${
+                          msg.role === 'user' 
+                            ? 'bg-sublime text-white rounded-tr-none' 
+                            : 'bg-white border border-zinc-100 text-zinc-800 rounded-tl-none shadow-sm'
+                        }`}>
+                          <div className="markdown-body">
+                            <Markdown>{msg.text}</Markdown>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {isAgisTyping && (
+                      <div className="flex justify-start">
+                        <div className="bg-white border border-zinc-100 p-4 rounded-2xl rounded-tl-none shadow-sm flex gap-1">
+                          <span className="w-1.5 h-1.5 bg-zinc-300 rounded-full animate-bounce" />
+                          <span className="w-1.5 h-1.5 bg-zinc-300 rounded-full animate-bounce [animation-delay:0.2s]" />
+                          <span className="w-1.5 h-1.5 bg-zinc-300 rounded-full animate-bounce [animation-delay:0.4s]" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleAgisChat} className="p-4 border-t border-zinc-100 bg-white rounded-b-3xl">
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={agisInput}
+                        onChange={(e) => setAgisInput(e.target.value)}
+                        placeholder="Pergunte qualquer coisa para Agis..."
+                        className="flex-1 bg-zinc-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-sublime/20 outline-none"
+                      />
+                      <button 
+                        type="submit"
+                        disabled={isAgisTyping || !agisInput.trim()}
+                        className="p-3 bg-sublime text-white rounded-xl hover:bg-sublime/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ArrowUpRight size={20} />
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
                 <div className="glass-card p-8 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-4">
-                    <Sparkles className="text-sublime/20 w-12 h-12" />
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 bg-sublime/10 rounded-lg">
+                      <Sparkles size={20} className="text-sublime" />
+                    </div>
+                    <h3 className="font-bold">Análise Estratégica Mensal</h3>
                   </div>
                   
                   {isLoadingAI ? (
@@ -2634,94 +3065,189 @@ function DashboardContent() {
                       <div className="h-4 bg-zinc-100 rounded w-3/4" />
                       <div className="h-4 bg-zinc-100 rounded w-full" />
                       <div className="h-4 bg-zinc-100 rounded w-5/6" />
-                      <div className="h-32 bg-zinc-50 rounded w-full" />
                     </div>
                   ) : (
                     <div className="prose prose-zinc max-w-none">
                       <div className="markdown-body">
-                        <Markdown>{aiAdvice || 'Nenhuma análise disponível no momento. Adicione mais transações para uma análise profunda.'}</Markdown>
+                        <Markdown>{aiAdvice || 'Nenhuma análise disponível no momento.'}</Markdown>
                       </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="glass-card p-6">
-                  <h3 className="font-bold text-lg mb-6 flex items-center gap-2">
-                    <TrendingUp size={20} className="text-emerald-500" />
-                    Previsão de Fluxo de Caixa
-                  </h3>
-                  
-                  {isLoadingAI ? (
-                    <div className="h-64 bg-zinc-50 animate-pulse rounded-xl" />
-                  ) : cashFlowPrediction ? (
-                    <div className="space-y-6">
-                      <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={cashFlowPrediction.predictions}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                            <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#a1a1aa' }} />
-                            <Tooltip 
-                              contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                            />
-                            <Bar dataKey="estimatedIncome" fill="#10b981" radius={[4, 4, 0, 0]} name="Entrada Prevista" />
-                            <Bar dataKey="estimatedExpense" fill="#ef4444" radius={[4, 4, 0, 0]} name="Saída Prevista" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
-                        <p className="text-sm text-emerald-800 font-medium">
-                          <Info size={16} className="inline mr-2" />
-                          {cashFlowPrediction.advice}
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-12 text-center text-zinc-400 italic">
-                      Dados insuficientes para previsão.
                     </div>
                   )}
                 </div>
               </div>
 
               <div className="space-y-6">
-                <div className="glass-card p-6 bg-zinc-900 text-white">
+                <div className="glass-card p-6 bg-zinc-900 text-white overflow-hidden relative">
+                  <div className="absolute -right-4 -bottom-4 opacity-10">
+                    <AlertTriangle size={120} />
+                  </div>
                   <h3 className="font-bold mb-4 flex items-center gap-2">
                     <AlertTriangle size={18} className="text-orange-400" />
-                    Fiscalização MEI
+                    Alerta de Risco
                   </h3>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-end">
-                      <span className="text-xs text-zinc-400">Faturamento Anual</span>
-                      <span className="text-lg font-bold">R$ {transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0).toLocaleString()}</span>
+                  
+                  {cashFlowPrediction ? (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-zinc-400">Nível de Risco</span>
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                          cashFlowPrediction.riskLevel === 'alto' ? 'bg-red-500/20 text-red-400' : 
+                          cashFlowPrediction.riskLevel === 'médio' ? 'bg-orange-500/20 text-orange-400' : 
+                          'bg-emerald-500/20 text-emerald-400'
+                        }`}>
+                          {cashFlowPrediction.riskLevel}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-zinc-400">Burn Rate</span>
+                        <span className="font-bold">R$ {cashFlowPrediction.burnRate?.toLocaleString()}/mês</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-zinc-400">Meses até Break-even</span>
+                        <span className="font-bold">{cashFlowPrediction.breakEvenMonths} meses</span>
+                      </div>
+                      <div className="pt-4 border-t border-white/10">
+                        <p className="text-[10px] text-zinc-400 leading-relaxed italic">
+                          * Baseado no ritmo atual de gastos e entradas.
+                        </p>
+                      </div>
                     </div>
-                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                      <div 
-                        className={`h-full transition-all ${
-                          (transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0) / 81000) > 0.8 ? 'bg-orange-500' : 'bg-sublime'
-                        }`}
-                        style={{ width: `${Math.min((transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0) / 81000) * 100, 100)}%` }}
-                      />
-                    </div>
-                    <p className="text-[10px] text-zinc-400">
-                      Limite MEI: R$ 81.000,00. 
-                      { (transactions.filter(t => t.type === 'entrada' && new Date(t.date).getFullYear() === new Date().getFullYear()).reduce((sum, t) => sum + t.amount, 0) / 81000) > 0.8 
-                        ? ' Atenção! Você está chegando perto do limite.' 
-                        : ' Você está dentro da margem de segurança.' }
-                    </p>
-                  </div>
+                  ) : (
+                    <p className="text-xs text-zinc-400">Aguardando dados suficientes...</p>
+                  )}
                 </div>
 
                 <div className="glass-card p-6">
-                  <h3 className="font-bold mb-4">Dicas Rápidas</h3>
-                  <div className="space-y-3">
-                    {aiInsights.map((insight, i) => (
-                      <div key={i} className="flex gap-3 p-3 rounded-xl bg-zinc-50 border border-zinc-100">
-                        <div className="w-1.5 h-1.5 rounded-full bg-sublime mt-1.5 shrink-0" />
-                        <p className="text-xs text-zinc-600 leading-relaxed">{insight}</p>
+                  <h3 className="font-bold text-sm mb-4 flex items-center gap-2">
+                    <TrendingUp size={18} className="text-emerald-500" />
+                    Evolução do Saldo
+                  </h3>
+                  {cashFlowPrediction && (
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={cashFlowPrediction.predictions}>
+                          <defs>
+                            <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <XAxis dataKey="month" hide />
+                          <YAxis hide />
+                          <Tooltip />
+                          <Area type="monotone" dataKey="estimatedIncome" stroke="#10b981" fillOpacity={1} fill="url(#colorIncome)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-zinc-500 mt-2">Projeção otimista baseada no histórico.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeView === 'growth_plan' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Plano de Crescimento</h2>
+                <p className="text-sm text-zinc-500">Estratégias para expansão e evolução do seu Studio.</p>
+              </div>
+              <div className="p-2 bg-sublime/10 rounded-xl text-sublime">
+                <ArrowUpRight size={24} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-6">
+                <div className="glass-card p-8">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 bg-emerald-500/10 rounded-lg">
+                      <Target size={20} className="text-emerald-500" />
+                    </div>
+                    <h3 className="font-bold">Projetos de Expansão</h3>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {[
+                      { title: 'Novos Equipamentos', desc: 'Aquisição de laser, cadeiras ou macas.', icon: Camera, color: 'text-blue-500', category: 'equipamento' },
+                      { title: 'Novos Parceiros', desc: 'Contratação de manicures, cabeleireiros.', icon: Users, color: 'text-emerald-500', category: 'outro' },
+                      { title: 'Ampliação do Espaço', desc: 'Reforma ou mudança para local maior.', icon: Building2, color: 'text-purple-500', category: 'reforma' },
+                      { title: 'Marketing & Branding', desc: 'Campanhas e nova identidade visual.', icon: Sparkles, color: 'text-amber-500', category: 'outro' }
+                    ].map((project, i) => (
+                      <div 
+                        key={i} 
+                        onClick={() => {
+                          setPrefilledGoal({ name: project.title, category: project.category });
+                          setIsAddingGoal(true);
+                        }}
+                        className="p-4 rounded-2xl border border-zinc-100 bg-zinc-50 hover:border-sublime/30 transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className={`p-2 rounded-lg bg-white shadow-sm ${project.color}`}>
+                            <project.icon size={18} />
+                          </div>
+                          <Plus size={16} className="text-zinc-300 group-hover:text-sublime transition-colors" />
+                        </div>
+                        <h4 className="font-bold text-sm mb-1">{project.title}</h4>
+                        <p className="text-[10px] text-zinc-500 leading-relaxed">{project.desc}</p>
                       </div>
                     ))}
                   </div>
+                </div>
+
+                <div className="glass-card p-8">
+                  <h3 className="font-bold mb-6">Consultoria de Viabilidade (IA)</h3>
+                  <div className="p-6 bg-sublime/5 border border-sublime/10 rounded-2xl space-y-4">
+                    <p className="text-sm text-zinc-600 leading-relaxed">
+                      "Com base no seu faturamento médio de R$ {transactions.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0).toLocaleString()} e sua taxa de ocupação atual, a contratação de um novo parceiro aumentaria seu lucro líquido em aproximadamente 15% após o terceiro mês."
+                    </p>
+                    <button 
+                      onClick={() => setActiveView('ai')}
+                      className="text-xs font-bold text-sublime flex items-center gap-1 hover:underline"
+                    >
+                      Perguntar para Agis <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="glass-card p-6">
+                  <h3 className="font-bold text-sm mb-4">Metas de Evolução</h3>
+                  <div className="space-y-4">
+                    {goals.map((goal, i) => (
+                      <div key={i} className="space-y-2">
+                        <div className="flex justify-between text-[10px] font-bold uppercase text-zinc-400">
+                          <span>{goal.name}</span>
+                          <span>{Math.round((goal.current_amount / goal.target_amount) * 100)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-sublime transition-all"
+                            style={{ width: `${Math.min((goal.current_amount / goal.target_amount) * 100, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <button 
+                      onClick={() => setIsAddingGoal(true)}
+                      className="w-full py-2 rounded-xl border border-dashed border-zinc-200 text-zinc-400 text-[10px] font-bold hover:bg-zinc-50 transition-all"
+                    >
+                      + Nova Meta de Crescimento
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-6 rounded-2xl bg-zinc-900 text-white space-y-4">
+                  <div className="flex items-center gap-2 text-sublime">
+                    <Sparkles size={18} />
+                    <span className="text-xs font-bold uppercase tracking-wider">Dica de Ouro</span>
+                  </div>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    "O reinvestimento no próprio negócio é o investimento com maior retorno potencial. Foque em equipamentos que aumentem o ticket médio por cliente."
+                  </p>
                 </div>
               </div>
             </div>
@@ -3308,7 +3834,18 @@ function DashboardContent() {
 
         {activeView === 'admin' && <AdminPanel />}
 
-        {activeView !== 'dashboard' && activeView !== 'fixed_costs' && activeView !== 'mei' && activeView !== 'goals' && activeView !== 'transactions' && activeView !== 'settings' && activeView !== 'admin' && (
+        {activeView !== 'dashboard' && 
+         activeView !== 'fixed_costs' && 
+         activeView !== 'mei' && 
+         activeView !== 'goals' && 
+         activeView !== 'transactions' && 
+         activeView !== 'settings' && 
+         activeView !== 'admin' &&
+         activeView !== 'investments' &&
+         activeView !== 'ai' &&
+         activeView !== 'appointments' &&
+         activeView !== 'partners' &&
+         activeView !== 'commissions' && (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="p-6 bg-zinc-100 rounded-full text-zinc-400">
               <LayoutDashboard size={48} />
@@ -3559,11 +4096,16 @@ function DashboardContent() {
         {isAddingGoal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
             <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
-              <h2 className="text-xl font-bold mb-6">Nova Meta ou Sonho</h2>
-              <form onSubmit={handleAddGoal} className="space-y-4">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold">Nova Meta ou Sonho</h2>
+                <button onClick={() => { setIsAddingGoal(false); setPrefilledGoal(null); }} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                  <X size={20} className="text-zinc-400" />
+                </button>
+              </div>
+              <form onSubmit={(e) => { handleAddGoal(e); setPrefilledGoal(null); }} className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Nome da Meta</label>
-                  <input required name="name" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Reforma do Studio" />
+                  <input required name="name" defaultValue={prefilledGoal?.name || ''} className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Reforma do Studio" />
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
@@ -3584,8 +4126,12 @@ function DashboardContent() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Categoria</label>
-                    <select name="category" className="w-full p-3 rounded-xl border border-zinc-200">
-                      <option value="casamento">Casamento</option>
+                    <select 
+                      name="category" 
+                      defaultValue={prefilledGoal?.category || 'outro'} 
+                      onChange={(e) => setSelectedGoalCategory(e.target.value)}
+                      className="w-full p-3 rounded-xl border border-zinc-200"
+                    >
                       <option value="reserva_emergencia">Reserva de Emergência</option>
                       <option value="equipamento">Equipamento</option>
                       <option value="reforma">Reforma</option>
@@ -3594,6 +4140,13 @@ function DashboardContent() {
                     </select>
                   </div>
                 </div>
+
+                {selectedGoalCategory === 'outro' && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Qual categoria?</label>
+                    <input required name="custom_category" className="w-full p-3 rounded-xl border border-zinc-200" placeholder="Ex: Aposentadoria, Carro..." />
+                  </div>
+                )}
 
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold uppercase text-zinc-400 ml-1">Observações</label>
@@ -3733,6 +4286,115 @@ function DashboardContent() {
               // The onSnapshot listener will handle the update
             }}
           />
+        )}
+
+        {/* Onboarding Quiz Modal */}
+        {isShowingQuiz && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/80 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }} 
+              animate={{ scale: 1, opacity: 1, y: 0 }} 
+              className="bg-white rounded-[32px] p-8 w-full max-w-2xl shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-2 bg-zinc-100">
+                <motion.div 
+                  className="h-full bg-sublime" 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(quizStep / 5) * 100}%` }}
+                />
+              </div>
+
+              {quizStep < 5 ? (
+                <div className="space-y-8 py-4">
+                  <div className="flex items-center gap-3 text-sublime">
+                    <Sparkles size={24} />
+                    <span className="text-xs font-bold uppercase tracking-widest">Diagnóstico Agis</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h2 className="text-3xl font-bold text-zinc-900 font-display">
+                      {quizStep === 0 && "Como está a saúde financeira do seu Studio hoje?"}
+                      {quizStep === 1 && "Qual seu maior desafio atual?"}
+                      {quizStep === 2 && "Você possui uma reserva de emergência?"}
+                      {quizStep === 3 && "Qual seu objetivo principal para os próximos 90 dias?"}
+                      {quizStep === 4 && "Como você controla suas entradas e saídas?"}
+                    </h2>
+                    <p className="text-zinc-500">Sua resposta ajuda a Agis a criar seu plano de 90 dias.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {(quizStep === 0 ? [
+                      "Organizada e lucrativa",
+                      "Equilibrada, mas sem sobra",
+                      "Desorganizada e com dívidas",
+                      "Não tenho certeza"
+                    ] : quizStep === 1 ? [
+                      "Aumentar o número de clientes",
+                      "Controlar gastos excessivos",
+                      "Contratar novos parceiros",
+                      "Precificar corretamente os serviços"
+                    ] : quizStep === 2 ? [
+                      "Sim, para mais de 6 meses",
+                      "Sim, mas para pouco tempo",
+                      "Não, vivo o mês a mês",
+                      "Estou começando a montar"
+                    ] : quizStep === 3 ? [
+                      "Aumentar faturamento em 20%",
+                      "Reduzir custos fixos",
+                      "Investir em novos equipamentos",
+                      "Organizar todo o financeiro"
+                    ] : [
+                      "Uso este aplicativo (Sublime)",
+                      "Uso planilhas",
+                      "Uso caderno/papel",
+                      "Ainda não tenho controle"
+                    ]).map((option, i) => (
+                      <button 
+                        key={i}
+                        onClick={() => handleQuizAnswer(option)}
+                        className="w-full p-5 rounded-2xl border-2 border-zinc-100 text-left font-medium text-zinc-700 hover:border-sublime hover:bg-sublime/5 hover:text-sublime transition-all flex items-center justify-between group"
+                      >
+                        {option}
+                        <ChevronRight size={18} className="text-zinc-300 group-hover:text-sublime transition-all" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-8 py-4">
+                  <div className="text-center space-y-4">
+                    <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto text-emerald-600">
+                      <CheckCircle2 size={40} />
+                    </div>
+                    <div className="space-y-2">
+                      <h2 className="text-3xl font-bold text-zinc-900 font-display">Seu Plano de 90 Dias está pronto!</h2>
+                      <p className="text-zinc-500">A Agis analisou suas respostas e traçou o melhor caminho.</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-zinc-50 rounded-2xl p-6 max-h-[400px] overflow-y-auto">
+                    {quizPlan ? (
+                      <div className="markdown-body">
+                        <Markdown>{quizPlan}</Markdown>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                        <RefreshCw size={32} className="text-sublime animate-spin" />
+                        <p className="text-sm text-zinc-500 font-medium">Agis está processando seu plano...</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <button 
+                    onClick={() => setIsShowingQuiz(false)}
+                    className="w-full py-4 bg-sublime text-white rounded-2xl font-bold shadow-xl shadow-sublime/20 hover:bg-sublime/90 transition-all"
+                  >
+                    Começar minha Jornada
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
       {isShowingOnboardingGuide && (

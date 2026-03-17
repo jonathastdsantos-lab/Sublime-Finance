@@ -245,7 +245,7 @@
         "partnerId": { "type": "string" },
         "transactionId": { "type": "string" },
         "amount": { "type": "number" },
-        "status": { "type": "string", "enum": ["pending", "paid"] },
+        "status": { "type": "string", "enum": ["pending", "paid", "pendente", "pago"] },
         "date": { "type": "string", "format": "date" },
         "userId": { "type": "string" }
       },
@@ -257,15 +257,13 @@
       "type": "object",
       "properties": {
         "clientName": { "type": "string" },
-        "serviceName": { "type": "string" },
-        "estimatedValue": { "type": "number" },
-        "startTime": { "type": "string", "format": "date-time" },
-        "endTime": { "type": "string", "format": "date-time" },
-        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"] },
-        "googleEventId": { "type": "string" },
+        "service": { "type": "string" },
+        "price": { "type": "number" },
+        "time": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled", "pendente", "pago"] },
         "userId": { "type": "string" }
       },
-      "required": ["clientName", "serviceName", "estimatedValue", "startTime", "endTime", "status", "userId"]
+      "required": ["clientName", "service", "price", "time", "status", "userId"]
     }
   },
   "firestore": {

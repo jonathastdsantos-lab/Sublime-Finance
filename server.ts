@@ -101,13 +101,16 @@ async function startServer() {
   });
 
   // 4. Google Calendar OAuth
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    `${process.env.APP_URL}/auth/google/callback`
-  );
-
   app.get("/api/auth/google/url", (req, res) => {
+    const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
+    const redirectUri = `${origin}/auth/google/callback`;
+    
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      redirectUri
+    );
+
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: ["https://www.googleapis.com/auth/calendar.events"],
@@ -118,6 +121,15 @@ async function startServer() {
 
   app.get("/auth/google/callback", async (req, res) => {
     const { code } = req.query;
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const redirectUri = `${origin}/auth/google/callback`;
+
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      redirectUri
+    );
+
     try {
       const { tokens } = await oauth2Client.getToken(code as string);
       // In a real app, you'd store these tokens in a database associated with the user.

@@ -8,8 +8,17 @@ service cloud.firestore {
     // Collection: transactions
     // Fields: description (string), amount (number), type (string), category (string), date (string), userId (string)
     //
+    // Collection: partners
+    // Fields: name (string), role (string), commissionRate (number), email (string), phone (string), userId (string)
+    //
+    // Collection: commissions
+    // Fields: partnerId (string), transactionId (string), amount (number), status (string), date (string), userId (string)
+    //
+    // Collection: appointments
+    // Fields: clientName (string), service (string), price (number), time (string), status (string), userId (string)
+    //
     // Collection: goals
-    // Fields: target (number), month (string), userId (string)
+    // Fields: name (string), target_amount (number), current_amount (number), target_date (string), category (string), notes (string), userId (string)
     //
     // Collection: serviceCosts
     // Fields: name (string), materialCost (number), energyCost (number), timeInMinutes (number), hourlyRate (number), currentPrice (number), userId (string)
@@ -24,9 +33,6 @@ service cloud.firestore {
     // Collection: fixedCosts
     // Fields: name (string), category (string), amount (number), due_day (number), is_active (bool), notes (string), userId (string)
     //
-    // Collection: goals
-    // Fields: name (string), target_amount (number), current_amount (number), target_date (string), category (string), notes (string), userId (string)
-    //
     // Collection: meiObligations
     // Fields: name (string), type (string), amount (number), due_date (string), status (string), reference_month (string), notes (string), userId (string)
     //
@@ -40,6 +46,10 @@ service cloud.firestore {
     // Document ID: userId
     // Fields: email (string), displayName (string), photoURL (string), role (string), status (string), blockedFeatures (list), lastLogin (string), createdAt (string), isBlocked (bool), blockMessage (string), blockReason (string), metadata (map)
     //
+    // Collection: app_config
+    // Document ID: global
+    // Fields: maintenanceMode (bool), globalMessage (string), topBanner (map), featureFlags (map)
+    //
     // Collection: audit_logs
     // Fields: action (string), details (map), userId (string), userEmail (string), timestamp (string)
     //
@@ -49,11 +59,11 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-    
+
     function isAdmin() {
       return isAuthenticated() &&
         (
@@ -67,269 +77,86 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.email == "jonathastdsantos@gmail.com" && request.auth.token.email_verified == true;
     }
 
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
-
-    // Domain Validators
-    function isValidTransaction(data) {
-      let validCategories = [
-        "servico", "material", "aluguel", "luz", "emprestimo", "mercado", "retirada", 
-        "pix_recebido", "pix_enviado", "pagamento", "mei_das", "imposto", "outro"
-      ];
-      let validPaymentMethods = ["dinheiro", "pix", "cartao_debito", "cartao_credito", "transferencia", "boleto"];
-
-      return data.description is string && data.description.size() > 0 && data.description.size() < 200 &&
-             data.amount is number &&
-             data.type in ['entrada', 'saida'] &&
-             data.category in validCategories &&
-             data.date is string &&
-             data.userId == request.auth.uid &&
-             (!('payment_method' in data) || data.payment_method in validPaymentMethods) &&
-             (!('notes' in data) || data.notes is string) &&
-             (!('is_recurring' in data) || data.is_recurring is bool);
-    }
-
-    function isValidOnboarding(data) {
-      return data.name is string && data.name.size() > 0 &&
-             data.primaryColor is string &&
-             data.revenueGoal is number &&
-             data.proLabore is number &&
-             data.expenseAlertThreshold is number &&
-             data.mainService is string &&
-             data.hasPartners is bool &&
-             data.dataEntryMethod is string &&
-             data.onboardingCompleted is bool &&
-             (!('userId' in data) || data.userId == request.auth.uid || isAdmin());
-    }
-
-    function isValidServiceCost(data) {
-      return data.name is string && data.name.size() > 0 &&
-             data.materialCost is number &&
-             data.energyCost is number &&
-             data.timeInMinutes is number &&
-             data.hourlyRate is number &&
-             data.currentPrice is number &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidFixedCost(data) {
-      let validCategories = ["aluguel", "luz", "agua", "internet", "emprestimo", "mei_das", "seguro", "software", "outro"];
-      return data.name is string && data.name.size() > 0 &&
-             data.category in validCategories &&
-             data.amount is number && data.amount >= 0 &&
-             data.due_day is number && data.due_day >= 1 && data.due_day <= 31 &&
-             data.is_active is bool &&
-             (!('notes' in data) || data.notes is string) &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidGoal(data) {
-      let validCategories = ["casamento", "reserva_emergencia", "equipamento", "reforma", "viagem", "outro"];
-      return data.name is string && data.name.size() > 0 &&
-             data.target_amount is number && data.target_amount > 0 &&
-             data.current_amount is number && data.current_amount >= 0 &&
-             (!('target_date' in data) || data.target_date is string) &&
-             (!('category' in data) || data.category in validCategories) &&
-             (!('notes' in data) || data.notes is string) &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidMeiObligation(data) {
-      let validTypes = ["das_mensal", "dasn_simei", "imposto", "taxa", "outro"];
-      let validStatuses = ["pendente", "pago", "atrasado"];
-      return data.name is string && data.name.size() > 0 &&
-             data.type in validTypes &&
-             data.amount is number && data.amount >= 0 &&
-             data.due_date is string &&
-             data.status in validStatuses &&
-             (!('reference_month' in data) || data.reference_month is string) &&
-             (!('notes' in data) || data.notes is string) &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidBankAccount(data) {
-      let validAccountTypes = ["checking", "savings", "business"];
-      let validStatuses = ["active", "error", "disconnected"];
-      return data.bankName is string && data.bankName.size() > 0 &&
-             data.accountType in validAccountTypes &&
-             data.balance is number &&
-             data.currency is string &&
-             data.lastSync is string &&
-             data.institutionId is string &&
-             data.userId == request.auth.uid &&
-             data.status in validStatuses;
-    }
-
-    function isValidBankTransaction(data) {
-      return data.bankAccountId is string &&
-             data.description is string &&
-             data.amount is number &&
-             data.date is string &&
-             data.category is string &&
-             data.type in ["DEBIT", "CREDIT"] &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidPartner(data) {
-      return data.name is string && data.name.size() > 0 &&
-             data.commissionRate is number && data.commissionRate >= 0 && data.commissionRate <= 100 &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidCommission(data) {
-      return data.partnerId is string &&
-             data.transactionId is string &&
-             data.amount is number &&
-             data.status in ['pending', 'paid'] &&
-             data.date is string &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidAppointment(data) {
-      return data.clientName is string &&
-             data.serviceName is string &&
-             data.estimatedValue is number &&
-             data.startTime is string &&
-             data.endTime is string &&
-             data.status in ['scheduled', 'completed', 'cancelled'] &&
-             data.userId == request.auth.uid;
-    }
-
-    function isValidBlockedFeature(f) {
-      return f is string || (
-        f is map &&
-        f.keys().hasOnly(['id', 'expiresAt', 'subAreas']) &&
-        f.id is string &&
-        (!('expiresAt' in f) || f.expiresAt is string) &&
-        (!('subAreas' in f) || f.subAreas is list)
-      );
-    }
-
-    function isValidUser(data) {
-      let validRoles = ['admin', 'user'];
-      let validStatuses = ['active', 'blocked'];
-      let validReasons = ['payment_pending', 'terms_violation', 'account_maintenance', 'other'];
-      let allowedFields = ['id', 'name', 'email', 'role', 'status', 'createdAt', 'lastLogin', 'blockedFeatures', 'displayName', 'photoURL', 'isBlocked', 'blockMessage', 'blockReason', 'metadata'];
-      
-      return data.keys().hasOnly(allowedFields) &&
-             data.email is string &&
-             (!('name' in data) || data.name is string) &&
-             (!('displayName' in data) || data.displayName is string) &&
-             (!('photoURL' in data) || data.photoURL is string) &&
-             data.role in validRoles &&
-             data.status in validStatuses &&
-             (!('isBlocked' in data) || data.isBlocked is bool) &&
-             (!('blockMessage' in data) || data.blockMessage is string) &&
-             (!('blockReason' in data) || data.blockReason in validReasons || data.blockReason == null) &&
-             (!('blockedFeatures' in data) || data.blockedFeatures is list) &&
-             (!('lastLogin' in data) || data.lastLogin is string) &&
-             (!('createdAt' in data) || data.createdAt is string) &&
-             (!('metadata' in data) || data.metadata is map);
-    }
-
+    // Basic rules for all collections
     match /transactions/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidTransaction(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
+    match /goals/{id} {
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+    }
     match /serviceCosts/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidServiceCost(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidServiceCost(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
     match /weddingGoals/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create, update, delete: if isOwner(userId) || isAdmin();
+      allow read, write: if isOwner(userId) || isAdmin();
     }
-
     match /onboarding/{userId} {
       allow read, write: if isOwner(userId) || isAdmin();
     }
-
     match /fixedCosts/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidFixedCost(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidFixedCost(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
-    match /goals/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidGoal(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidGoal(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
-    }
-
     match /meiObligations/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidMeiObligation(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidMeiObligation(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
     match /bank_accounts/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidBankAccount(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidBankAccount(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
     match /bank_transactions/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidBankTransaction(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidBankTransaction(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
     match /users/{userId} {
       allow list: if isAdmin();
       allow get: if isOwner(userId) || isAdmin();
       
       allow create: if isMasterAdmin() || 
-                    (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user') ||
-                    (isAdmin() && isValidUser(request.resource.data));
+                    (isOwner(userId) && request.resource.data.role == 'user') ||
+                    isAdmin();
                     
       allow update: if isMasterAdmin() || 
-                    (isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role && !('isBlocked' in request.resource.data) && !('role' in request.resource.data)) ||
-                    (isAdmin() && isValidUser(request.resource.data));
+                    (isOwner(userId) && request.resource.data.role == resource.data.role && !(request.resource.data.keys().hasAny(['isBlocked'])) && !(request.resource.data.keys().hasAny(['role']))) ||
+                    isAdmin();
       
       allow delete: if isAdmin();
     }
-
-    match /app_config/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
     match /audit_logs/{id} {
       allow read, create: if isAdmin();
       allow update, delete: if false;
     }
-
     match /partners/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidPartner(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidPartner(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read, write: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
     }
-
+    match /app_config/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
     match /commissions/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidCommission(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidCommission(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && 
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.partnerId is string &&
+                    request.resource.data.amount is number &&
+                    (request.resource.data.status == 'pending' || request.resource.data.status == 'paid' || request.resource.data.status == 'pendente' || request.resource.data.status == 'pago');
+      allow update: if isAuthenticated() && 
+                    resource.data.userId == request.auth.uid && 
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.amount is number &&
+                    (request.resource.data.status == 'pending' || request.resource.data.status == 'paid' || request.resource.data.status == 'pendente' || request.resource.data.status == 'pago');
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
     }
-
     match /appointments/{id} {
-      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && isValidAppointment(request.resource.data);
-      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && isValidAppointment(request.resource.data);
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && 
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.clientName is string &&
+                    request.resource.data.price is number &&
+                    (request.resource.data.status == 'scheduled' || request.resource.data.status == 'completed' || request.resource.data.status == 'cancelled' || request.resource.data.status == 'agendado' || request.resource.data.status == 'concluido' || request.resource.data.status == 'cancelado');
+      allow update: if isAuthenticated() && 
+                    resource.data.userId == request.auth.uid && 
+                    request.resource.data.userId == request.auth.uid &&
+                    request.resource.data.price is number &&
+                    (request.resource.data.status == 'scheduled' || request.resource.data.status == 'completed' || request.resource.data.status == 'cancelled' || request.resource.data.status == 'agendado' || request.resource.data.status == 'concluido' || request.resource.data.status == 'cancelado');
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
     }
   }
 }
