@@ -3,25 +3,30 @@ import { Transaction, Partner, Commission, FixedCost, OnboardingData, Appointmen
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-async function callGeminiWithRetry(params: any, maxRetries = 3) {
-  let delay = 2000;
+async function callGeminiWithRetry(params: any, maxRetries = 5) {
+  let delay = 5000;
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await genAI.models.generateContent(params);
     } catch (error: any) {
       const errorText = error instanceof Error ? error.message : JSON.stringify(error);
-      const isRateLimit = errorText.includes('429') || errorText.includes('RESOURCE_EXHAUSTED');
+      const isRateLimit = errorText.includes('429') || 
+                          errorText.includes('RESOURCE_EXHAUSTED') || 
+                          errorText.includes('quota');
       
       if (isRateLimit && i < maxRetries - 1) {
-        console.warn(`Gemini API rate limit hit. Retrying in ${delay}ms... (Attempt ${i + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        delay *= 2;
+        // Add jitter to avoid synchronized retries
+        const jitter = Math.random() * 1000;
+        const totalDelay = delay + jitter;
+        console.warn(`Gemini API rate limit hit. Retrying in ${Math.round(totalDelay)}ms... (Attempt ${i + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, totalDelay));
+        delay *= 2; // Exponential backoff
         continue;
       }
       throw error;
     }
   }
-  throw new Error("Max retries reached for Gemini API");
+  throw new Error("Max retries reached for Gemini API. Please try again in a few minutes.");
 }
 
 const SYSTEM_INSTRUCTION = `

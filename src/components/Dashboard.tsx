@@ -539,33 +539,38 @@ function DashboardContent() {
 
   useEffect(() => {
     if (!user || transactions.length === 0) return;
-    const fetchAI = async () => {
-      setIsLoadingAI(true);
-      try {
-        // Legacy insights for dashboard
-        const insights = await getAIInsights(transactions);
-        setAiInsights(insights);
+    
+    const timeoutId = setTimeout(() => {
+      const fetchAI = async () => {
+        setIsLoadingAI(true);
+        try {
+          // Legacy insights for dashboard
+          const insights = await getAIInsights(transactions);
+          setAiInsights(insights);
 
-        // Risk Alert Analysis
-        const risk = await getRiskAlert(transactions, fixedCosts, totalIncome, totalExpense);
-        setAiRiskAlert(risk);
+          // Risk Alert Analysis
+          const risk = await getRiskAlert(transactions, fixedCosts, totalIncome, totalExpense);
+          setAiRiskAlert(risk);
 
-        // Advanced advice
-        if (onboardingData) {
-          const advice = await getFinancialAdvice(transactions, partners, commissions, fixedCosts, goal, onboardingData);
-          setAiAdvice(advice);
+          // Advanced advice
+          if (onboardingData) {
+            const advice = await getFinancialAdvice(transactions, partners, commissions, fixedCosts, goal, onboardingData);
+            setAiAdvice(advice);
+          }
+
+          // Cash flow prediction
+          const prediction = await predictCashFlow(transactions);
+          setCashFlowPrediction(prediction);
+        } catch (error) {
+          console.error("AI Fetch error:", error);
+        } finally {
+          setIsLoadingAI(false);
         }
+      };
+      fetchAI();
+    }, 2000); // 2 second debounce
 
-        // Cash flow prediction
-        const prediction = await predictCashFlow(transactions);
-        setCashFlowPrediction(prediction);
-      } catch (error) {
-        console.error("AI Fetch error:", error);
-      } finally {
-        setIsLoadingAI(false);
-      }
-    };
-    fetchAI();
+    return () => clearTimeout(timeoutId);
   }, [transactions.length, goal, partners.length, commissions.length, fixedCosts.length]);
 
   // Stats
