@@ -193,7 +193,7 @@ export async function getRiskAlert(
     ${isOutflowHigh ? "- Saídas significativamente maiores que as entradas." : ""}
     
     TAREFA:
-    Como Agis, gere um alerta de risco curto e direto (máximo 200 caracteres) e 3 ações corretivas rápidas.
+    Como Agis, gere um alerta de risco curto e direto (máximo 200 caracteres) e 3 ações corretivas rápidas e acionáveis (ex: "Reduzir gastos com X", "Revisar comissão de Y").
     
     Retorne um JSON:
     {

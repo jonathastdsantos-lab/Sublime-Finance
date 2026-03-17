@@ -3,6 +3,7 @@ import {
   TrendingUp, 
   TrendingDown, 
   AlertTriangle, 
+  Check,
   CheckCircle2, 
   Target, 
   Sparkles,
@@ -21,6 +22,8 @@ import {
   Repeat,
   FileText,
   Menu,
+  Mail,
+  MessageCircle,
   X,
   ChevronRight,
   Bell,
@@ -201,6 +204,7 @@ function DashboardContent() {
   const [aiAdvice, setAiAdvice] = useState<string>('');
   const [cashFlowPrediction, setCashFlowPrediction] = useState<any>(null);
   const [aiRiskAlert, setAiRiskAlert] = useState<{ alert: string; actions: string[]; severity: string } | null>(null);
+  const [completedRiskActions, setCompletedRiskActions] = useState<number[]>([]);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
   
   // Agis Chat State
@@ -1947,32 +1951,80 @@ function DashboardContent() {
               <motion.div 
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="p-6 rounded-3xl bg-red-50 border border-red-100 space-y-4"
+                className="p-6 rounded-3xl bg-white border border-red-100 shadow-xl shadow-red-500/5 space-y-6 relative overflow-hidden"
               >
-                <div className="flex items-start gap-4">
-                  <div className="p-3 bg-red-100 text-red-600 rounded-2xl">
-                    <AlertTriangle size={24} />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-lg font-bold text-red-900 mb-1">Alerta de Risco Financeiro</h3>
-                    <p className="text-sm text-red-700 leading-relaxed">{aiRiskAlert.alert}</p>
+                <div className="absolute top-0 left-0 w-1 h-full bg-red-500" />
+                
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 bg-red-50 text-red-600 rounded-2xl">
+                      <AlertTriangle size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider rounded-md">Risco Detectado</span>
+                        <h3 className="text-lg font-bold text-zinc-900">Plano de Contingência Agis</h3>
+                      </div>
+                      <p className="text-sm text-zinc-500 leading-relaxed max-w-2xl">{aiRiskAlert.alert}</p>
+                    </div>
                   </div>
                   <button 
                     onClick={() => setAiRiskAlert(null)}
-                    className="p-2 hover:bg-red-200/50 rounded-full transition-colors"
+                    className="p-2 hover:bg-zinc-100 rounded-full transition-colors"
                   >
-                    <X size={18} className="text-red-400" />
+                    <X size={18} className="text-zinc-400" />
                   </button>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {aiRiskAlert.actions.map((action, i) => (
-                    <div key={i} className="flex items-center gap-2 p-3 bg-white/50 rounded-xl border border-red-100/50">
-                      <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
-                      <span className="text-[11px] font-bold text-red-800">{action}</span>
-                    </div>
-                  ))}
+                <div className="space-y-3">
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Ações Corretivas Sugeridas</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {aiRiskAlert.actions.map((action, i) => {
+                      const isCompleted = completedRiskActions.includes(i);
+                      return (
+                        <motion.div 
+                          key={i}
+                          whileHover={{ y: -2 }}
+                          onClick={() => {
+                            if (isCompleted) {
+                              setCompletedRiskActions(prev => prev.filter(item => item !== i));
+                            } else {
+                              setCompletedRiskActions(prev => [...prev, i]);
+                            }
+                          }}
+                          className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between h-full ${
+                            isCompleted 
+                              ? 'bg-emerald-50 border-emerald-100 text-emerald-900' 
+                              : 'bg-zinc-50 border-zinc-100 hover:border-red-200 text-zinc-700'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between mb-3">
+                            <div className={`p-1.5 rounded-lg ${isCompleted ? 'bg-emerald-200/50 text-emerald-600' : 'bg-white text-zinc-400'}`}>
+                              {isCompleted ? <Check size={16} /> : <div className="w-4 h-4 border-2 border-zinc-200 rounded" />}
+                            </div>
+                            <span className={`text-[10px] font-bold uppercase ${isCompleted ? 'text-emerald-500' : 'text-zinc-400'}`}>
+                              {isCompleted ? 'Concluído' : `Ação ${i + 1}`}
+                            </span>
+                          </div>
+                          <p className={`text-xs font-bold leading-snug ${isCompleted ? 'line-through opacity-60' : ''}`}>
+                            {action}
+                          </p>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
                 </div>
+
+                {completedRiskActions.length === aiRiskAlert.actions.length && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex items-center justify-center gap-2 p-3 bg-emerald-500 text-white rounded-2xl font-bold text-sm"
+                  >
+                    <Sparkles size={18} />
+                    Parabéns! Você concluiu todas as ações recomendadas.
+                  </motion.div>
+                )}
               </motion.div>
             )}
 
@@ -3826,6 +3878,24 @@ function DashboardContent() {
                   <p className="text-[10px] text-zinc-400 leading-relaxed">
                     Este aplicativo foi desenvolvido para proporcionar uma gestão financeira de elite para Studios de Beleza.
                   </p>
+                  
+                  <div className="pt-4 border-t border-sublime/10 space-y-3">
+                    <p className="text-[10px] font-bold uppercase text-sublime">Suporte Sublime</p>
+                    <div className="space-y-2">
+                      <a href="mailto:sublimefinance@gmail.com" className="flex items-center gap-2 text-xs text-zinc-600 hover:text-sublime transition-colors">
+                        <div className="p-1.5 bg-white rounded-lg shadow-sm">
+                          <Mail size={14} className="text-sublime" />
+                        </div>
+                        sublimefinance@gmail.com
+                      </a>
+                      <a href="https://wa.me/5521988843994" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs text-zinc-600 hover:text-sublime transition-colors">
+                        <div className="p-1.5 bg-white rounded-lg shadow-sm">
+                          <MessageCircle size={14} className="text-sublime" />
+                        </div>
+                        21 98884-3994 (Whatsapp)
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
