@@ -85,7 +85,7 @@ import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, 
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig, Partner, Commission, Appointment } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
-import { getFinancialAdvice, predictCashFlow, askAgis, getOnboardingQuizPlan, getAIInsights, getRiskAlert } from '../services/aiService';
+import { getFinancialAdvice, predictCashFlow, askGeisa, getOnboardingQuizPlan, getAIInsights, getRiskAlert, getGoalActionPlan } from '../services/aiService';
 import Markdown from 'react-markdown';
 import OnboardingForm from './OnboardingForm';
 import ErrorBoundary from './ErrorBoundary';
@@ -206,11 +206,14 @@ function DashboardContent() {
   const [aiRiskAlert, setAiRiskAlert] = useState<{ alert: string; actions: string[]; severity: string } | null>(null);
   const [completedRiskActions, setCompletedRiskActions] = useState<number[]>([]);
   const [isLoadingAI, setIsLoadingAI] = useState(false);
+  const [newGoalActionPlan, setNewGoalActionPlan] = useState<string | null>(null);
+  const [viewingGoalPlan, setViewingGoalPlan] = useState<Goal | null>(null);
+  const [goalToDelete, setGoalToDelete] = useState<string | null>(null);
   
-  // Agis Chat State
-  const [agisMessages, setAgisMessages] = useState<{ role: 'user' | 'agis', text: string }[]>([]);
-  const [agisInput, setAgisInput] = useState('');
-  const [isAgisTyping, setIsAgisTyping] = useState(false);
+  // Geisa Chat State
+  const [geisaMessages, setGeisaMessages] = useState<{ role: 'user' | 'geisa', text: string }[]>([]);
+  const [geisaInput, setGeisaInput] = useState('');
+  const [isGeisaTyping, setIsGeisaTyping] = useState(false);
 
   // Onboarding Quiz State
   const [isShowingQuiz, setIsShowingQuiz] = useState(false);
@@ -782,19 +785,32 @@ function DashboardContent() {
       : formData.get('category');
 
     try {
-      await addDoc(collection(db, 'goals'), {
-        name: formData.get('name'),
+      const goalData = {
+        name: formData.get('name') as string,
         target_amount: Number(formData.get('target_amount')),
         current_amount: Number(formData.get('current_amount')) || 0,
-        target_date: formData.get('target_date'),
-        category: category || 'Outro',
-        notes: formData.get('notes'),
+        target_date: formData.get('target_date') as string,
+        category: category as string || 'Outro',
+        notes: formData.get('notes') as string,
         userId: user.uid
-      });
+      };
+
+      const docRef = await addDoc(collection(db, 'goals'), goalData);
       setIsAddingGoal(false);
       setSelectedGoalCategory('outro');
+
+      // Generate AI Action Plan
+      if (onboardingData) {
+        setIsLoadingAI(true);
+        const plan = await getGoalActionPlan(goalData, onboardingData);
+        setNewGoalActionPlan(plan);
+        // Save plan to the goal document
+        await updateDoc(docRef, { actionPlan: plan });
+        setIsLoadingAI(false);
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'goals');
+      setIsLoadingAI(false);
     }
   };
 
@@ -1026,29 +1042,29 @@ function DashboardContent() {
     }
   };
 
-  const handleAgisChat = async (e: React.FormEvent) => {
+  const handleGeisaChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!agisInput.trim() || !user) return;
+    if (!geisaInput.trim() || !user) return;
 
-    const userMessage = agisInput;
-    setAgisInput('');
-    setAgisMessages(prev => [...prev, { role: 'user', text: userMessage }]);
-    setIsAgisTyping(true);
+    const userMessage = geisaInput;
+    setGeisaInput('');
+    setGeisaMessages(prev => [...prev, { role: 'user', text: userMessage }]);
+    setIsGeisaTyping(true);
 
     try {
-      const response = await askAgis(userMessage, {
+      const response = await askGeisa(userMessage, {
         transactions,
         partners,
         appointments,
         fixedCosts,
         onboardingData: onboardingData!
       });
-      setAgisMessages(prev => [...prev, { role: 'agis', text: response || 'Desculpe, tive um problema ao processar sua pergunta.' }]);
+      setGeisaMessages(prev => [...prev, { role: 'geisa', text: response || 'Desculpe, tive um problema ao processar sua pergunta.' }]);
     } catch (error) {
-      console.error('Agis Chat Error:', error);
-      setAgisMessages(prev => [...prev, { role: 'agis', text: 'Erro ao conectar com Agis.' }]);
+      console.error('Geisa Chat Error:', error);
+      setGeisaMessages(prev => [...prev, { role: 'geisa', text: 'Erro ao conectar com Geisa.' }]);
     } finally {
-      setIsAgisTyping(false);
+      setIsGeisaTyping(false);
     }
   };
 
@@ -1095,9 +1111,9 @@ function DashboardContent() {
   };
 
   const deleteGoal = async (id: string) => {
-    if (!confirm('Excluir esta meta?')) return;
     try {
       await deleteDoc(doc(db, 'goals', id));
+      setGoalToDelete(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `goals/${id}`);
     }
@@ -1963,7 +1979,7 @@ function DashboardContent() {
                     <div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider rounded-md">Risco Detectado</span>
-                        <h3 className="text-lg font-bold text-zinc-900">Plano de Contingência Agis</h3>
+                        <h3 className="text-lg font-bold text-zinc-900">Plano de Contingência Geisa</h3>
                       </div>
                       <p className="text-sm text-zinc-500 leading-relaxed max-w-2xl">{aiRiskAlert.alert}</p>
                     </div>
@@ -2530,7 +2546,7 @@ function DashboardContent() {
                   <div key={g.id} className="glass-card p-6 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
                       {!isFeatureBlocked('goals', 'edit') && (
-                        <button onClick={() => deleteGoal(g.id)} className="text-zinc-300 hover:text-red-500">
+                        <button onClick={() => setGoalToDelete(g.id)} className="text-zinc-300 hover:text-red-500">
                           <X size={16} />
                         </button>
                       )}
@@ -2573,22 +2589,33 @@ function DashboardContent() {
                         </div>
                       </div>
 
-                      <div className="pt-2">
-                        <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Atualizar Valor</label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="number" 
-                            disabled={isFeatureBlocked('goals', 'edit')}
-                            className={`flex-1 p-2 text-xs rounded-lg border border-zinc-100 bg-zinc-50 ${isFeatureBlocked('goals', 'edit') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            placeholder={isFeatureBlocked('goals', 'edit') ? "Bloqueado" : "Novo valor..."}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                updateGoalAmount(g.id, Number((e.target as HTMLInputElement).value));
-                                (e.target as HTMLInputElement).value = '';
-                              }
-                            }}
-                          />
+                      <div className="pt-2 space-y-2">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">Atualizar Valor</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="number" 
+                              disabled={isFeatureBlocked('goals', 'edit')}
+                              className={`flex-1 p-2 text-xs rounded-lg border border-zinc-100 bg-zinc-50 ${isFeatureBlocked('goals', 'edit') ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              placeholder={isFeatureBlocked('goals', 'edit') ? "Bloqueado" : "Novo valor..."}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  updateGoalAmount(g.id, Number((e.target as HTMLInputElement).value));
+                                  (e.target as HTMLInputElement).value = '';
+                                }
+                              }}
+                            />
+                          </div>
                         </div>
+                        {g.actionPlan && (
+                          <button 
+                            onClick={() => setViewingGoalPlan(g)}
+                            className="w-full py-2 rounded-xl bg-sublime/10 text-sublime text-[10px] font-bold hover:bg-sublime/20 transition-all flex items-center justify-center gap-1"
+                          >
+                            <Sparkles size={12} />
+                            Ver Plano Geisa
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3008,7 +3035,7 @@ function DashboardContent() {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-zinc-900 font-display">Agis - Consultora IA</h2>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Geisa - Consultora IA</h2>
                 <p className="text-sm text-zinc-500">Sua inteligência financeira e suporte especializado.</p>
               </div>
               <button 
@@ -3022,20 +3049,20 @@ function DashboardContent() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
-                {/* Agis Chat Interface */}
+                {/* Geisa Chat Interface */}
                 <div className="glass-card flex flex-col h-[600px]">
                   <div className="p-4 border-b border-zinc-100 flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-sublime/10 flex items-center justify-center text-sublime">
                       <Sparkles size={20} />
                     </div>
                     <div>
-                      <h3 className="font-bold text-sm">Conversar com Agis</h3>
+                      <h3 className="font-bold text-sm">Conversar com Geisa</h3>
                       <p className="text-[10px] text-emerald-600 font-bold uppercase tracking-wider">Online</p>
                     </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-zinc-50/30">
-                    {agisMessages.length === 0 && (
+                    {geisaMessages.length === 0 && (
                       <div className="text-center py-12 space-y-4">
                         <div className="w-16 h-16 bg-zinc-100 rounded-full flex items-center justify-center mx-auto text-zinc-400">
                           <HelpCircle size={32} />
@@ -3049,7 +3076,7 @@ function DashboardContent() {
                             <button 
                               key={i}
                               onClick={() => {
-                                setAgisInput(suggestion);
+                                setGeisaInput(suggestion);
                               }}
                               className="text-[10px] bg-white border border-zinc-200 px-3 py-1.5 rounded-full hover:border-sublime hover:text-sublime transition-all"
                             >
@@ -3060,7 +3087,7 @@ function DashboardContent() {
                       </div>
                     )}
 
-                    {agisMessages.map((msg, i) => (
+                    {geisaMessages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${
                           msg.role === 'user' 
@@ -3073,7 +3100,7 @@ function DashboardContent() {
                         </div>
                       </div>
                     ))}
-                    {isAgisTyping && (
+                    {isGeisaTyping && (
                       <div className="flex justify-start">
                         <div className="bg-white border border-zinc-100 p-4 rounded-2xl rounded-tl-none shadow-sm flex gap-1">
                           <span className="w-1.5 h-1.5 bg-zinc-300 rounded-full animate-bounce" />
@@ -3084,18 +3111,18 @@ function DashboardContent() {
                     )}
                   </div>
 
-                  <form onSubmit={handleAgisChat} className="p-4 border-t border-zinc-100 bg-white rounded-b-3xl">
+                  <form onSubmit={handleGeisaChat} className="p-4 border-t border-zinc-100 bg-white rounded-b-3xl">
                     <div className="flex gap-2">
                       <input 
                         type="text" 
-                        value={agisInput}
-                        onChange={(e) => setAgisInput(e.target.value)}
-                        placeholder="Pergunte qualquer coisa para Agis..."
+                        value={geisaInput}
+                        onChange={(e) => setGeisaInput(e.target.value)}
+                        placeholder="Pergunte qualquer coisa para Geisa..."
                         className="flex-1 bg-zinc-50 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-sublime/20 outline-none"
                       />
                       <button 
                         type="submit"
-                        disabled={isAgisTyping || !agisInput.trim()}
+                        disabled={isGeisaTyping || !geisaInput.trim()}
                         className="p-3 bg-sublime text-white rounded-xl hover:bg-sublime/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <ArrowUpRight size={20} />
@@ -3259,7 +3286,7 @@ function DashboardContent() {
                       onClick={() => setActiveView('ai')}
                       className="text-xs font-bold text-sublime flex items-center gap-1 hover:underline"
                     >
-                      Perguntar para Agis <ChevronRight size={14} />
+                      Perguntar para Geisa <ChevronRight size={14} />
                     </button>
                   </div>
                 </div>
@@ -3271,8 +3298,24 @@ function DashboardContent() {
                   <div className="space-y-4">
                     {goals.map((goal, i) => (
                       <div key={i} className="space-y-2">
-                        <div className="flex justify-between text-[10px] font-bold uppercase text-zinc-400">
-                          <span>{goal.name}</span>
+                        <div className="flex justify-between items-center text-[10px] font-bold uppercase text-zinc-400">
+                          <div className="flex items-center gap-2">
+                            <span>{goal.name}</span>
+                            {goal.actionPlan && (
+                              <button 
+                                onClick={() => setViewingGoalPlan(goal)}
+                                className="text-[8px] px-1.5 py-0.5 bg-sublime/10 text-sublime rounded hover:bg-sublime/20 transition-all"
+                              >
+                                Ver Plano
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => setGoalToDelete(goal.id)}
+                              className="text-[8px] px-1.5 py-0.5 bg-red-50 text-red-400 rounded hover:bg-red-100 transition-all"
+                            >
+                              Excluir
+                            </button>
+                          </div>
                           <span>{Math.round((goal.current_amount / goal.target_amount) * 100)}%</span>
                         </div>
                         <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
@@ -4203,6 +4246,7 @@ function DashboardContent() {
                       className="w-full p-3 rounded-xl border border-zinc-200"
                     >
                       <option value="reserva_emergencia">Reserva de Emergência</option>
+                      <option value="expansao">Projeto de Expansão</option>
                       <option value="equipamento">Equipamento</option>
                       <option value="reforma">Reforma</option>
                       <option value="viagem">Viagem</option>
@@ -4228,6 +4272,106 @@ function DashboardContent() {
                   <button type="submit" className="flex-1 p-3 rounded-xl bg-sublime text-white font-bold shadow-lg shadow-sublime/20">Salvar</button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isLoadingAI && !newGoalActionPlan && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              className="bg-white rounded-3xl p-8 flex flex-col items-center space-y-4 shadow-2xl"
+            >
+              <div className="w-12 h-12 border-4 border-sublime/20 border-t-sublime rounded-full animate-spin" />
+              <div className="text-center">
+                <p className="font-bold text-zinc-900">Geisa está trabalhando...</p>
+                <p className="text-xs text-zinc-500">Montando seu plano de ação estratégico</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {newGoalActionPlan && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              className="bg-white rounded-3xl p-8 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto relative"
+            >
+              <button 
+                onClick={() => setNewGoalActionPlan(null)}
+                className="absolute top-4 right-4 p-2 hover:bg-zinc-100 rounded-full transition-colors"
+              >
+                <X size={20} className="text-zinc-400" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-sublime/10 text-sublime rounded-2xl">
+                  <Sparkles size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-zinc-900">Plano de Ação Estratégico</h2>
+                  <p className="text-xs text-zinc-500">Gerado pela Geisa para seu novo projeto</p>
+                </div>
+              </div>
+
+              <div className="prose prose-zinc max-w-none">
+                <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 mb-6">
+                  <Markdown>{newGoalActionPlan}</Markdown>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setNewGoalActionPlan(null)}
+                  className="flex-1 p-4 rounded-2xl bg-sublime text-white font-bold shadow-lg shadow-sublime/20 hover:bg-sublime/90 transition-all"
+                >
+                  Entendido, vamos lá!
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {viewingGoalPlan && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              className="bg-white rounded-3xl p-8 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto relative"
+            >
+              <button 
+                onClick={() => setViewingGoalPlan(null)}
+                className="absolute top-4 right-4 p-2 hover:bg-zinc-100 rounded-full transition-colors"
+              >
+                <X size={20} className="text-zinc-400" />
+              </button>
+
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-sublime/10 text-sublime rounded-2xl">
+                  <Sparkles size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-zinc-900">Plano de Ação: {viewingGoalPlan.name}</h2>
+                  <p className="text-xs text-zinc-500">Estratégia personalizada pela Geisa</p>
+                </div>
+              </div>
+
+              <div className="prose prose-zinc max-w-none">
+                <div className="bg-zinc-50 p-6 rounded-2xl border border-zinc-100 mb-6">
+                  <Markdown>{viewingGoalPlan.actionPlan}</Markdown>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setViewingGoalPlan(null)}
+                  className="flex-1 p-4 rounded-2xl bg-sublime text-white font-bold shadow-lg shadow-sublime/20 hover:bg-sublime/90 transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -4273,6 +4417,32 @@ function DashboardContent() {
                 </button>
                 <button 
                   onClick={() => deleteTransaction(transactionToDelete)}
+                  className="flex-1 p-3 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
+                >
+                  Excluir
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {goalToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl text-center">
+              <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={32} />
+              </div>
+              <h2 className="text-xl font-bold mb-2">Excluir Meta?</h2>
+              <p className="text-zinc-500 text-sm mb-6">Esta ação removerá permanentemente esta meta e seu plano de ação.</p>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setGoalToDelete(null)}
+                  className="flex-1 p-3 rounded-xl border font-bold text-zinc-500 hover:bg-zinc-50 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={() => deleteGoal(goalToDelete)}
                   className="flex-1 p-3 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-600/20"
                 >
                   Excluir
@@ -4378,7 +4548,7 @@ function DashboardContent() {
                 <div className="space-y-8 py-4">
                   <div className="flex items-center gap-3 text-sublime">
                     <Sparkles size={24} />
-                    <span className="text-xs font-bold uppercase tracking-widest">Diagnóstico Agis</span>
+                    <span className="text-xs font-bold uppercase tracking-widest">Diagnóstico Geisa</span>
                   </div>
 
                   <div className="space-y-2">
@@ -4389,7 +4559,7 @@ function DashboardContent() {
                       {quizStep === 3 && "Qual seu objetivo principal para os próximos 90 dias?"}
                       {quizStep === 4 && "Como você controla suas entradas e saídas?"}
                     </h2>
-                    <p className="text-zinc-500">Sua resposta ajuda a Agis a criar seu plano de 90 dias.</p>
+                    <p className="text-zinc-500">Sua resposta ajuda a Geisa a criar seu plano de 90 dias.</p>
                   </div>
 
                   <div className="grid grid-cols-1 gap-3">
@@ -4438,7 +4608,7 @@ function DashboardContent() {
                     </div>
                     <div className="space-y-2">
                       <h2 className="text-3xl font-bold text-zinc-900 font-display">Seu Plano de 90 Dias está pronto!</h2>
-                      <p className="text-zinc-500">A Agis analisou suas respostas e traçou o melhor caminho.</p>
+                      <p className="text-zinc-500">A Geisa analisou suas respostas e traçou o melhor caminho.</p>
                     </div>
                   </div>
 
@@ -4450,7 +4620,7 @@ function DashboardContent() {
                     ) : (
                       <div className="flex flex-col items-center justify-center py-12 space-y-4">
                         <RefreshCw size={32} className="text-sublime animate-spin" />
-                        <p className="text-sm text-zinc-500 font-medium">Agis está processando seu plano...</p>
+                        <p className="text-sm text-zinc-500 font-medium">Geisa está processando seu plano...</p>
                       </div>
                     )}
                   </div>

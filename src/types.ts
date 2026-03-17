@@ -75,8 +75,9 @@ export interface Goal {
   target_amount: number;
   current_amount: number;
   target_date?: string;
-  category: 'casamento' | 'reserva_emergencia' | 'equipamento' | 'reforma' | 'viagem' | 'outro';
+  category: 'casamento' | 'reserva_emergencia' | 'equipamento' | 'reforma' | 'viagem' | 'expansao' | 'outro';
   notes?: string;
+  actionPlan?: string;
   userId: string;
 }
 
