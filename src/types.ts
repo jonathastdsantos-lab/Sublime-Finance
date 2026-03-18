@@ -29,6 +29,19 @@ export interface BlockedFeature {
   subAreas?: string[];
 }
 
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  interval: 'month' | 'year';
+  features: string[]; // List of text features to display on the pricing table
+  blockedFeatures: (string | BlockedFeature)[]; // Array of feature IDs that are BLOCKED for this plan
+  isPopular?: boolean;
+  active: boolean;
+  paymentLink?: string; // Link for Stripe Checkout or Mercado Pago
+}
+
 export interface UserProfile {
   id: string;
   name: string;
@@ -42,6 +55,8 @@ export interface UserProfile {
   blockMessage?: string;
   blockReason?: 'payment_pending' | 'terms_violation' | 'account_maintenance' | 'other';
   metadata?: Record<string, any>;
+  planId?: string; // e.g., 'free', 'pro', 'premium'
+  subscriptionStatus?: 'active' | 'past_due' | 'canceled' | 'trialing';
 }
 
 export interface AppConfig {

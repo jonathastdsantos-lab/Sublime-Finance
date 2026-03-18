@@ -26,7 +26,11 @@ import {
   BarChart3,
   RefreshCcw,
   Key,
-  Bell
+  Bell,
+  CreditCard,
+  Plus,
+  Trash2,
+  Save
 } from 'lucide-react';
 import { 
   collection, 
@@ -36,6 +40,7 @@ import {
   updateDoc,
   orderBy,
   setDoc,
+  deleteDoc,
   getDocs,
   limit,
   Timestamp
@@ -44,7 +49,7 @@ import { db, auth, handleFirestoreError, OperationType, logAudit } from '../fire
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { UserProfile, BlockedFeature, AppConfig } from '../types';
+import { UserProfile, BlockedFeature, AppConfig, SubscriptionPlan } from '../types';
 
 const FEATURES = [
   { 
@@ -108,7 +113,7 @@ const FEATURES = [
   },
 ];
 
-type AdminTab = 'users' | 'global' | 'infra' | 'logs';
+type AdminTab = 'users' | 'plans' | 'global' | 'infra' | 'logs';
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
@@ -127,6 +132,8 @@ export default function AdminPanel() {
   const [blockMessage, setBlockMessage] = useState('');
   const [auditReport, setAuditReport] = useState<{ type: 'info' | 'warning' | 'error', message: string }[] | null>(null);
   const [isPerformingAction, setIsPerformingAction] = useState(false);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
+  const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
@@ -148,6 +155,16 @@ export default function AdminPanel() {
       }
     });
 
+    const unsubscribePlans = onSnapshot(collection(db, 'plans'), (snapshot) => {
+      const plansData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as SubscriptionPlan));
+      setPlans(plansData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'plans');
+    });
+
     const qLogs = query(collection(db, 'audit_logs'), orderBy('timestamp', 'desc'), limit(50));
     const unsubscribeLogs = onSnapshot(qLogs, (snapshot) => {
       const logs = snapshot.docs.map(doc => ({
@@ -162,6 +179,7 @@ export default function AdminPanel() {
     return () => {
       unsubscribeUsers();
       unsubscribeConfig();
+      unsubscribePlans();
       unsubscribeLogs();
     };
   }, []);
@@ -375,6 +393,31 @@ export default function AdminPanel() {
     setIsPerformingAction(false);
   };
 
+  const savePlan = async () => {
+    if (!editingPlan) return;
+    try {
+      await setDoc(doc(db, 'plans', editingPlan.id), editingPlan);
+      setMessage({ type: 'success', text: 'Plano salvo com sucesso!' });
+      setEditingPlan(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `plans/${editingPlan.id}`);
+      setMessage({ type: 'error', text: 'Erro ao salvar plano.' });
+    }
+    setTimeout(() => setMessage(null), 3000);
+  };
+
+  const deletePlan = async (planId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este plano?')) return;
+    try {
+      await deleteDoc(doc(db, 'plans', planId));
+      setMessage({ type: 'success', text: 'Plano excluído com sucesso!' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `plans/${planId}`);
+      setMessage({ type: 'error', text: 'Erro ao excluir plano.' });
+    }
+    setTimeout(() => setMessage(null), 3000);
+  };
+
   const getFeatureBlock = (blockedFeatures: (string | BlockedFeature)[] = [], featureId: string): BlockedFeature | null => {
     const block = blockedFeatures.find(f => 
       typeof f === 'string' ? f === featureId : f.id === featureId
@@ -410,6 +453,7 @@ export default function AdminPanel() {
         <div className="flex bg-zinc-100 p-1 rounded-2xl">
           {[
             { id: 'users', label: 'Usuários', icon: Users },
+            { id: 'plans', label: 'Planos', icon: CreditCard },
             { id: 'global', label: 'Global', icon: Globe },
             { id: 'infra', label: 'Infra', icon: Server },
             { id: 'logs', label: 'Logs', icon: Terminal }
@@ -461,6 +505,7 @@ export default function AdminPanel() {
                   <tr className="bg-zinc-50 border-b border-zinc-100">
                     <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Usuário</th>
                     <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Cargo</th>
+                    <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Plano</th>
                     <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Status</th>
                     <th className="p-4 text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Ações</th>
                   </tr>
@@ -485,6 +530,27 @@ export default function AdminPanel() {
                         }`}>
                           {user.role === 'admin' ? 'Administrador' : 'Usuário'}
                         </span>
+                      </td>
+                      <td className="p-4">
+                        <select
+                          value={user.planId || 'free'}
+                          onChange={async (e) => {
+                            try {
+                              await updateDoc(doc(db, 'users', user.id), { planId: e.target.value });
+                              setMessage({ type: 'success', text: 'Plano do usuário atualizado!' });
+                            } catch (error) {
+                              handleFirestoreError(error, OperationType.UPDATE, `users/${user.id}`);
+                              setMessage({ type: 'error', text: 'Erro ao atualizar plano.' });
+                            }
+                            setTimeout(() => setMessage(null), 3000);
+                          }}
+                          className="p-1 rounded-lg text-xs border border-zinc-200 bg-white outline-none focus:border-sublime"
+                        >
+                          <option value="free">Gratuito</option>
+                          {plans.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
                       </td>
                       <td className="p-4">
                         <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
@@ -537,6 +603,72 @@ export default function AdminPanel() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'plans' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-bold">Planos de Assinatura</h3>
+            <button
+              onClick={() => setEditingPlan({
+                id: `plan_${Date.now()}`,
+                name: 'Novo Plano',
+                description: '',
+                price: 0,
+                interval: 'month',
+                features: [],
+                blockedFeatures: [],
+                active: true
+              })}
+              className="flex items-center gap-2 px-4 py-2 bg-sublime text-white rounded-xl font-bold text-sm hover:bg-sublime/90 transition-colors"
+            >
+              <Plus size={16} />
+              Criar Plano
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {plans.map(plan => (
+              <div key={plan.id} className={`glass-card p-6 border-2 ${plan.isPopular ? 'border-sublime' : 'border-transparent'}`}>
+                {plan.isPopular && (
+                  <div className="text-xs font-bold text-sublime uppercase tracking-wider mb-2">Mais Popular</div>
+                )}
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h4 className="font-bold text-xl">{plan.name}</h4>
+                    <p className="text-sm text-zinc-500">{plan.description}</p>
+                  </div>
+                  <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${plan.active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                    {plan.active ? 'Ativo' : 'Inativo'}
+                  </span>
+                </div>
+                
+                <div className="mb-6">
+                  <span className="text-3xl font-bold">R$ {plan.price.toFixed(2)}</span>
+                  <span className="text-zinc-500 text-sm">/{plan.interval === 'month' ? 'mês' : 'ano'}</span>
+                </div>
+
+                <div className="space-y-2 mb-6">
+                  {plan.features.map((feature, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-sm">
+                      <CheckCircle2 size={16} className="text-sublime" />
+                      <span>{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-6 border-t border-zinc-100 flex gap-2">
+                  <button
+                    onClick={() => setEditingPlan(plan)}
+                    className="flex-1 py-2 bg-zinc-100 text-zinc-900 rounded-xl font-bold text-sm hover:bg-zinc-200 transition-colors"
+                  >
+                    Editar
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -869,6 +1001,229 @@ export default function AdminPanel() {
                 >
                   Salvar Alterações
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {editingPlan && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm overflow-y-auto">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl p-6 w-full max-w-2xl shadow-2xl my-8"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold">Editar Plano</h3>
+                <button onClick={() => setEditingPlan(null)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+                  <XCircle size={24} className="text-zinc-400" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Nome do Plano</label>
+                    <input 
+                      type="text" 
+                      value={editingPlan.name}
+                      onChange={e => setEditingPlan({...editingPlan, name: e.target.value})}
+                      className="w-full p-3 rounded-xl border border-zinc-200 outline-none focus:border-sublime"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Preço (R$)</label>
+                    <input 
+                      type="number" 
+                      value={editingPlan.price}
+                      onChange={e => setEditingPlan({...editingPlan, price: Number(e.target.value)})}
+                      className="w-full p-3 rounded-xl border border-zinc-200 outline-none focus:border-sublime"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-zinc-500 uppercase">Descrição</label>
+                  <input 
+                    type="text" 
+                    value={editingPlan.description}
+                    onChange={e => setEditingPlan({...editingPlan, description: e.target.value})}
+                    className="w-full p-3 rounded-xl border border-zinc-200 outline-none focus:border-sublime"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Intervalo</label>
+                    <select 
+                      value={editingPlan.interval}
+                      onChange={e => setEditingPlan({...editingPlan, interval: e.target.value as 'month' | 'year'})}
+                      className="w-full p-3 rounded-xl border border-zinc-200 outline-none focus:border-sublime"
+                    >
+                      <option value="month">Mensal</option>
+                      <option value="year">Anual</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-zinc-500 uppercase">Link de Pagamento (Stripe/MercadoPago)</label>
+                    <input 
+                      type="text" 
+                      value={editingPlan.paymentLink || ''}
+                      onChange={e => setEditingPlan({...editingPlan, paymentLink: e.target.value})}
+                      placeholder="https://buy.stripe.com/..."
+                      className="w-full p-3 rounded-xl border border-zinc-200 outline-none focus:border-sublime"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input 
+                      type="checkbox" 
+                      checked={editingPlan.active}
+                      onChange={e => setEditingPlan({...editingPlan, active: e.target.checked})}
+                      className="rounded text-sublime focus:ring-sublime"
+                    />
+                    Plano Ativo
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input 
+                      type="checkbox" 
+                      checked={editingPlan.isPopular || false}
+                      onChange={e => setEditingPlan({...editingPlan, isPopular: e.target.checked})}
+                      className="rounded text-sublime focus:ring-sublime"
+                    />
+                    Destacar como Mais Popular
+                  </label>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-zinc-500 uppercase mb-2 block">Funcionalidades (Lista de Vantagens)</label>
+                  <textarea 
+                    value={editingPlan.features.join('\n')}
+                    onChange={e => setEditingPlan({...editingPlan, features: e.target.value.split('\n').filter(f => f.trim() !== '')})}
+                    placeholder="Uma vantagem por linha..."
+                    className="w-full p-3 rounded-xl border border-zinc-200 outline-none focus:border-sublime h-24"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-zinc-500 uppercase mb-2 block">Funcionalidades Bloqueadas (Sistema)</label>
+                  <div className="space-y-4 max-h-96 overflow-y-auto p-2 border border-zinc-200 rounded-xl">
+                    {FEATURES.map(feature => {
+                      const block = getFeatureBlock(editingPlan.blockedFeatures, feature.id);
+                      const isBlocked = !!block;
+                      const isExpanded = expandedFeature === feature.id;
+
+                      return (
+                        <div key={feature.id} className="space-y-2">
+                          <div
+                            className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all ${
+                              isBlocked 
+                                ? 'bg-red-50 border-red-100 text-red-600' 
+                                : 'bg-white border-zinc-100 text-zinc-600 hover:border-zinc-200'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => {
+                              const newBlocked = block 
+                                ? editingPlan.blockedFeatures.filter(f => (typeof f === 'string' ? f !== feature.id : f.id !== feature.id))
+                                : [...editingPlan.blockedFeatures, { id: feature.id }];
+                              setEditingPlan({...editingPlan, blockedFeatures: newBlocked});
+                            }}>
+                              {isBlocked ? <Lock size={16} /> : <Unlock size={16} className="opacity-40" />}
+                              <span className="font-bold text-sm">{feature.label}</span>
+                            </div>
+                            
+                            {isBlocked && (
+                              <button 
+                                onClick={() => setExpandedFeature(isExpanded ? null : feature.id)}
+                                className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                              >
+                                <Settings2 size={16} />
+                              </button>
+                            )}
+                          </div>
+
+                          <AnimatePresence>
+                            {isBlocked && isExpanded && (
+                              <motion.div 
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                className="ml-4 p-4 bg-zinc-50 rounded-2xl border border-zinc-100 space-y-4"
+                              >
+                                <div className="space-y-2">
+                                  <label className="text-[10px] font-bold uppercase text-zinc-400">Sub-áreas Bloqueadas</label>
+                                  <div className="grid grid-cols-1 gap-2">
+                                    {feature.subAreas.map(sub => {
+                                      const isSubBlocked = block.subAreas?.includes(sub.id);
+                                      return (
+                                        <button
+                                          key={sub.id}
+                                          onClick={() => {
+                                            const newSubAreas = isSubBlocked
+                                              ? (block.subAreas || []).filter(id => id !== sub.id)
+                                              : [...(block.subAreas || []), sub.id];
+                                            
+                                            const newBlocked = editingPlan.blockedFeatures.map(f => {
+                                              const id = typeof f === 'string' ? f : f.id;
+                                              if (id === feature.id) {
+                                                const base = typeof f === 'string' ? { id: f } : f;
+                                                return { ...base, subAreas: newSubAreas };
+                                              }
+                                              return f;
+                                            });
+                                            setEditingPlan({...editingPlan, blockedFeatures: newBlocked});
+                                          }}
+                                          className={`flex items-center justify-between p-2 rounded-lg border text-xs transition-all ${
+                                            isSubBlocked 
+                                              ? 'bg-red-100 border-red-200 text-red-700' 
+                                              : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'
+                                          }`}
+                                        >
+                                          <span>{sub.label}</span>
+                                          {isSubBlocked ? <Lock size={12} /> : <Unlock size={12} className="opacity-40" />}
+                                        </button>
+                                      );
+                                    })}
+                                    {feature.subAreas.length === 0 && (
+                                      <p className="text-xs text-zinc-400 italic">Nenhuma sub-área disponível para esta funcionalidade.</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-zinc-400 mt-1">Marque as áreas que o usuário NÃO terá acesso neste plano.</p>
+                </div>
+
+                <div className="flex justify-between pt-6 border-t border-zinc-100">
+                  <button 
+                    onClick={() => deletePlan(editingPlan.id)}
+                    className="flex items-center gap-2 px-4 py-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors font-bold text-sm"
+                  >
+                    <Trash2 size={16} /> Excluir Plano
+                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => setEditingPlan(null)}
+                      className="px-6 py-2 bg-zinc-100 text-zinc-600 rounded-xl font-bold text-sm hover:bg-zinc-200 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      onClick={savePlan}
+                      className="flex items-center gap-2 px-6 py-2 bg-sublime text-white rounded-xl font-bold text-sm hover:bg-sublime/90 transition-colors shadow-lg shadow-sublime/20"
+                    >
+                      <Save size={16} /> Salvar Plano
+                    </button>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>

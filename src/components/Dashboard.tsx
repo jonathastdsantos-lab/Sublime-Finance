@@ -49,7 +49,8 @@ import {
   Users,
   Percent,
   CalendarCheck,
-  Euro
+  Euro,
+  CreditCard
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -84,7 +85,7 @@ import {
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth, signInWithGoogle, registerWithEmail, loginWithEmail, logOut, updateProfile, resetPassword, handleFirestoreError, OperationType } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig, Partner, Commission, Appointment } from '../types';
+import { Transaction, ServiceCost, WeddingGoal, OnboardingData, FixedCost, MeiObligation, Goal, BankAccount, UserProfile, BlockedFeature, AppConfig, Partner, Commission, Appointment, SubscriptionPlan } from '../types';
 import { CATEGORIES, INITIAL_INVESTMENTS, PAYMENT_METHODS, FIXED_COST_CATEGORIES } from '../constants';
 import { getFinancialAdvice, predictCashFlow, askGeisa, getOnboardingQuizPlan, getAIInsights, getRiskAlert, getGoalActionPlan } from '../services/aiService';
 import Markdown from 'react-markdown';
@@ -94,7 +95,7 @@ import AdminPanel from './AdminPanel';
 import OnboardingGuide from './OnboardingGuide';
 import BlockedScreen from './BlockedScreen';
 
-type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin' | 'partners' | 'commissions' | 'appointments' | 'growth_plan';
+type View = 'dashboard' | 'transactions' | 'fixed_costs' | 'mei' | 'goals' | 'investments' | 'ai' | 'settings' | 'admin' | 'partners' | 'commissions' | 'appointments' | 'growth_plan' | 'plans';
 type AuthMode = 'login' | 'register' | '2fa_start' | '2fa_check';
 
 export default function Dashboard() {
@@ -118,6 +119,7 @@ function DashboardContent() {
   const [onboardingData, setOnboardingData] = useState<OnboardingData | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [isLoadingOnboarding, setIsLoadingOnboarding] = useState(true);
 
   const [activeView, setActiveView] = useState<View>('dashboard');
@@ -542,6 +544,16 @@ function DashboardContent() {
       handleFirestoreError(error, OperationType.GET, 'app_config/global');
     });
 
+    const unsubPlans = onSnapshot(collection(db, 'plans'), (snapshot) => {
+      const plansData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as SubscriptionPlan));
+      setPlans(plansData);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'plans');
+    });
+
     return () => {
       unsubTrans();
       unsubService();
@@ -554,6 +566,7 @@ function DashboardContent() {
       unsubCommissions();
       unsubAppointments();
       unsubConfig();
+      unsubPlans();
     };
   }, [user]);
 
@@ -1155,35 +1168,63 @@ function DashboardContent() {
   };
 
   const isFeatureBlocked = (view: string, subArea?: string) => {
-    if (!userProfile?.blockedFeatures) return false;
-    
-    const block = userProfile.blockedFeatures.find((f: any) => 
-      typeof f === 'string' ? f === view : f.id === view
-    );
-    
-    if (!block) return false;
-    
-    const blockObj = typeof block === 'string' ? { id: block } : (block as BlockedFeature);
-    
-    // Check expiration
-    if (blockObj.expiresAt && new Date(blockObj.expiresAt) < new Date()) {
-      return false;
+    // 1. Check user-specific blocked features (Admin overrides)
+    if (userProfile?.blockedFeatures) {
+      const block = userProfile.blockedFeatures.find((f: any) => 
+        typeof f === 'string' ? f === view : f.id === view
+      );
+      
+      if (block) {
+        const blockObj = typeof block === 'string' ? { id: block } : (block as BlockedFeature);
+        
+        // Check expiration
+        if (!blockObj.expiresAt || new Date(blockObj.expiresAt) >= new Date()) {
+          // If subArea is provided, check if it's blocked
+          if (subArea && blockObj.subAreas && blockObj.subAreas.length > 0) {
+            if (blockObj.subAreas.includes(subArea)) return true;
+          } else if (!subArea || !blockObj.subAreas || blockObj.subAreas.length === 0) {
+            // If no subArea provided or subAreas list is empty, the whole feature is blocked
+            return true;
+          }
+        }
+      }
     }
-    
-    // If subArea is provided, check if it's blocked
-    if (subArea && blockObj.subAreas && blockObj.subAreas.length > 0) {
-      return blockObj.subAreas.includes(subArea);
+
+    // 2. Check Plan-level blocked features
+    if (plans.length > 0) {
+      const userPlanId = userProfile?.planId || 'free';
+      const userPlan = plans.find(p => p.id === userPlanId);
+      
+      if (userPlan && userPlan.blockedFeatures) {
+        const block = userPlan.blockedFeatures.find((f: any) => 
+          typeof f === 'string' ? f === view : f.id === view
+        );
+        
+        if (block) {
+          const blockObj = typeof block === 'string' ? { id: block } : (block as BlockedFeature);
+          
+          // Check expiration
+          if (!blockObj.expiresAt || new Date(blockObj.expiresAt) >= new Date()) {
+            // If subArea is provided, check if it's blocked
+            if (subArea && blockObj.subAreas && blockObj.subAreas.length > 0) {
+              if (blockObj.subAreas.includes(subArea)) return true;
+            } else if (!subArea || !blockObj.subAreas || blockObj.subAreas.length === 0) {
+              // If no subArea provided or subAreas list is empty, the whole feature is blocked
+              return true;
+            }
+          }
+        }
+      }
     }
-    
-    // If no subArea provided or subAreas list is empty, the whole feature is blocked
-    return !subArea || !blockObj.subAreas || blockObj.subAreas.length === 0;
+
+    return false;
   };
 
   useEffect(() => {
     if (isFeatureBlocked(activeView)) {
       setActiveView('dashboard');
     }
-  }, [userProfile?.blockedFeatures, activeView]);
+  }, [userProfile?.blockedFeatures, userProfile?.planId, plans, activeView]);
 
   const NavItem = ({ view, icon: Icon, label }: { view: View, icon: any, label: string }) => {
     const isBlocked = isFeatureBlocked(view);
@@ -1648,6 +1689,7 @@ function DashboardContent() {
           <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
           <NavItem view="growth_plan" icon={ArrowUpRight} label="Plano de Crescimento" />
           <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
+          <NavItem view="plans" icon={CreditCard} label="Planos" />
           <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
           {userProfile?.role === 'admin' && (
             <NavItem view="admin" icon={Shield} label="Painel Admin" />
@@ -1729,6 +1771,7 @@ function DashboardContent() {
                 <NavItem view="investments" icon={TrendingUp} label="Investimentos" />
                 <NavItem view="growth_plan" icon={ArrowUpRight} label="Plano de Crescimento" />
                 <NavItem view="ai" icon={Sparkles} label="IA Financeira" />
+                <NavItem view="plans" icon={CreditCard} label="Planos" />
                 <NavItem view="settings" icon={Settings} label="Perfil & Ajustes" />
                 {userProfile?.role === 'admin' && (
                   <NavItem view="admin" icon={Shield} label="Painel Admin" />
@@ -3700,6 +3743,87 @@ function DashboardContent() {
           </div>
         )}
 
+        {activeView === 'plans' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-zinc-900 font-display">Planos e Assinaturas</h2>
+                <p className="text-sm text-zinc-500">Escolha o plano ideal para o momento do seu Studio.</p>
+              </div>
+              <div className="p-2 bg-sublime/10 rounded-xl text-sublime">
+                <CreditCard size={24} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {plans.filter(p => p.active).map(plan => {
+                const isCurrentPlan = (userProfile?.planId || 'free') === plan.id;
+                
+                return (
+                  <div key={plan.id} className={`glass-card p-6 relative flex flex-col ${plan.isPopular ? 'border-2 border-sublime ring-4 ring-sublime/10' : 'border border-zinc-100'} ${isCurrentPlan ? 'bg-zinc-50' : ''}`}>
+                    {plan.isPopular && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-sublime text-white px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-lg">
+                        Mais Popular
+                      </div>
+                    )}
+                    
+                    <div className="mb-6 mt-2">
+                      <h3 className="text-xl font-bold text-zinc-900">{plan.name}</h3>
+                      <p className="text-sm text-zinc-500 mt-1 h-10">{plan.description}</p>
+                    </div>
+
+                    <div className="mb-6">
+                      <span className="text-4xl font-bold text-zinc-900">R$ {plan.price.toFixed(2)}</span>
+                      <span className="text-zinc-500 text-sm">/{plan.interval === 'month' ? 'mês' : 'ano'}</span>
+                    </div>
+
+                    <div className="flex-1 space-y-3 mb-8">
+                      {plan.features.map((feature, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-sm text-zinc-600">
+                          <CheckCircle2 size={18} className="text-sublime shrink-0 mt-0.5" />
+                          <span className="leading-tight">{feature}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      disabled={isCurrentPlan}
+                      onClick={() => {
+                        if (plan.paymentLink) {
+                          window.open(plan.paymentLink, '_blank');
+                        } else {
+                          alert('Link de pagamento não configurado pelo administrador.');
+                        }
+                      }}
+                      className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
+                        isCurrentPlan 
+                          ? 'bg-zinc-200 text-zinc-500 cursor-not-allowed' 
+                          : plan.isPopular 
+                            ? 'bg-sublime text-white hover:bg-sublime/90 shadow-lg shadow-sublime/20' 
+                            : 'bg-zinc-900 text-white hover:bg-zinc-800'
+                      }`}
+                    >
+                      {isCurrentPlan ? 'Seu Plano Atual' : 'Assinar Agora'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <div className="glass-card p-6 bg-zinc-50 border-zinc-100 flex items-start gap-4">
+              <div className="p-3 bg-white rounded-xl shadow-sm text-sublime">
+                <Shield size={24} />
+              </div>
+              <div>
+                <h4 className="font-bold text-zinc-900">Pagamento Seguro</h4>
+                <p className="text-sm text-zinc-500 mt-1">
+                  Seus dados de pagamento são processados de forma segura. O acesso às funcionalidades premium é liberado automaticamente após a confirmação do pagamento.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeView === 'settings' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -4030,7 +4154,9 @@ function DashboardContent() {
          activeView !== 'ai' &&
          activeView !== 'appointments' &&
          activeView !== 'partners' &&
-         activeView !== 'commissions' && (
+         activeView !== 'commissions' &&
+         activeView !== 'plans' &&
+         activeView !== 'growth_plan' && (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="p-6 bg-zinc-100 rounded-full text-zinc-400">
               <LayoutDashboard size={48} />

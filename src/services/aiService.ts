@@ -3,16 +3,29 @@ import { Transaction, Partner, Commission, FixedCost, OnboardingData, Appointmen
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+let isQuotaExceeded = false;
+
 async function callGeminiWithRetry(params: any, maxRetries = 5) {
+  if (isQuotaExceeded) {
+    throw new Error("Quota exceeded. Skipping API call.");
+  }
+
   let delay = 5000;
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await genAI.models.generateContent(params);
     } catch (error: any) {
       const errorText = error instanceof Error ? error.message : JSON.stringify(error);
+      
+      // Check for hard quota limit
+      if (errorText.includes('quota') && errorText.includes('check your plan')) {
+        isQuotaExceeded = true;
+        console.warn("Gemini API quota exceeded. Disabling further AI calls for this session.");
+        throw new Error("Quota exceeded. Skipping API call.");
+      }
+
       const isRateLimit = errorText.includes('429') || 
-                          errorText.includes('RESOURCE_EXHAUSTED') || 
-                          errorText.includes('quota');
+                          errorText.includes('RESOURCE_EXHAUSTED');
       
       if (isRateLimit && i < maxRetries - 1) {
         // Add jitter to avoid synchronized retries
@@ -90,8 +103,10 @@ export async function getFinancialAdvice(
       config: { systemInstruction: SYSTEM_INSTRUCTION }
     });
     return response.text;
-  } catch (error) {
-    console.error("Financial Advice error:", error);
+  } catch (error: any) {
+    if (!error.message?.includes("Quota exceeded")) {
+      console.error("Financial Advice error:", error);
+    }
     return "Desculpe, não consegui gerar seus conselhos financeiros no momento.";
   }
 }
@@ -127,9 +142,31 @@ export async function predictCashFlow(transactions: Transaction[]) {
       text = text.split('```')[1].split('```')[0];
     }
     return JSON.parse(text.trim());
-  } catch (e) {
-    console.error("Predict Cash Flow error:", e);
-    return null;
+  } catch (e: any) {
+    if (!e.message?.includes("Quota exceeded")) {
+      console.error("Predict Cash Flow error:", e);
+    }
+    
+    // Fallback calculation if AI fails
+    if (transactions.length === 0) return null;
+    
+    const totalIncome = transactions.filter(t => t.type === 'entrada').reduce((sum, t) => sum + t.amount, 0);
+    const totalExpense = transactions.filter(t => t.type === 'saida').reduce((sum, t) => sum + t.amount, 0);
+    
+    // Very basic estimation based on total history
+    const avgIncome = totalIncome > 0 ? totalIncome / 3 : 0; // Assuming 3 months history for fallback
+    const avgExpense = totalExpense > 0 ? totalExpense / 3 : 0;
+    
+    return {
+      predictions: [
+        { month: "Mês 1", estimatedIncome: avgIncome, estimatedExpense: avgExpense, reason: "Estimativa baseada na média histórica (IA indisponível)" },
+        { month: "Mês 2", estimatedIncome: avgIncome, estimatedExpense: avgExpense, reason: "Estimativa baseada na média histórica (IA indisponível)" },
+        { month: "Mês 3", estimatedIncome: avgIncome, estimatedExpense: avgExpense, reason: "Estimativa baseada na média histórica (IA indisponível)" }
+      ],
+      burnRate: avgExpense,
+      breakEvenMonths: avgExpense > 0 ? Math.round(totalIncome / avgExpense) : 0,
+      riskLevel: avgExpense > avgIncome ? "alto" : "baixo"
+    };
   }
 }
 
@@ -164,8 +201,10 @@ export async function askGeisa(
     });
 
     return response.text;
-  } catch (error) {
-    console.error("Ask Geisa error:", error);
+  } catch (error: any) {
+    if (!error.message?.includes("Quota exceeded")) {
+      console.error("Ask Geisa error:", error);
+    }
     return "Desculpe, estou com dificuldade de responder agora. Tente novamente em instantes.";
   }
 }
@@ -195,8 +234,10 @@ export async function getAIInsights(transactions: Transaction[]) {
       text = text.split('```')[1].split('```')[0];
     }
     return JSON.parse(text.trim());
-  } catch (e) {
-    console.error("AI Insights error:", e);
+  } catch (e: any) {
+    if (!e.message?.includes("Quota exceeded")) {
+      console.error("AI Insights error:", e);
+    }
     return ["Mantenha o controle diário", "Revise seus custos fixos", "Invista em marketing"];
   }
 }
@@ -248,8 +289,10 @@ export async function getRiskAlert(
       text = text.split('```')[1].split('```')[0];
     }
     return JSON.parse(text.trim());
-  } catch (error) {
-    console.error("Risk Alert error:", error);
+  } catch (error: any) {
+    if (!error.message?.includes("Quota exceeded")) {
+      console.error("Risk Alert error:", error);
+    }
     return null;
   }
 }
@@ -270,8 +313,10 @@ export async function getOnboardingQuizPlan(quizAnswers: any) {
     });
 
     return response.text;
-  } catch (error) {
-    console.error("Onboarding Quiz Plan error:", error);
+  } catch (error: any) {
+    if (!error.message?.includes("Quota exceeded")) {
+      console.error("Onboarding Quiz Plan error:", error);
+    }
     return "Não consegui gerar seu plano agora devido a uma alta demanda. Por favor, tente novamente em alguns minutos.";
   }
 }
@@ -305,8 +350,10 @@ export async function getGoalActionPlan(goal: { name: string, target_amount: num
       config: { systemInstruction: SYSTEM_INSTRUCTION }
     });
     return response.text;
-  } catch (error) {
-    console.error("Goal Action Plan error:", error);
+  } catch (error: any) {
+    if (!error.message?.includes("Quota exceeded")) {
+      console.error("Goal Action Plan error:", error);
+    }
     return "Não consegui gerar o plano de ação no momento, mas continue firme no seu objetivo!";
   }
 }
